@@ -12,7 +12,7 @@
 |------:|--------|-------------|
 | 1 — Librarian core | ✅ | `librarian/{schema,manifest,changelog,session,store,librarian}.py` — transactional engine, invariants I1–I6/I8/I9/I11/I12/I13, atomic ZIP swap |
 | 2 — Bootstrap + master prompt | ✅ | `librarian/bootstrap.py` (`boot()` + auto-checkpoint `Session`), `MASTER_PROMPT.md` (outside the ZIP), `scripts/build_memory.py` |
-| 3 — Salesforce digest | ✅ | `librarian/digest/salesforce.py` (+ `omnistudio.py`) — objects/Apex/triggers/flows/LWC/flexipages/permsets/profiles/permset groups → KUs + typed graph; external stub nodes for standard/packaged objects; queries incl. `grants_on`/`pages_for`/`neighbors`/`dependents`. **OmniStudio (IP/OmniScript/DataMapper, old+new model) = PROVISIONAL** — synthetic-tested, needs a sanitized sample to validate. Validated on a sample org export (200 KUs, 269-node graph). |
+| 3 — Salesforce digest | ✅ | `librarian/digest/salesforce.py` (+ `omnistudio.py`) — objects/Apex/triggers/flows/LWC/flexipages/permsets/profiles/permset groups → KUs + typed graph; external stub nodes for standard/packaged objects; queries incl. `grants_on`/`pages_for`/`neighbors`/`dependents`. **OmniStudio (OmniScript/IP/DataMapper/FlexCard)** — real standard metadata format (`*.os/oip/rpt/ouc-meta.xml` + embedded JSON) confirmed against a trial org + Vlocity DataPacks; element-level reference keys still provisional (need a populated org). Validated on a sample org export (200 KUs, 269-node graph). |
 | 3b — Mule digest | ✅ | `librarian/digest/mule.py` — one KU per Mule config file; flow/sub-flow/connector graph; `flow-ref` calls, connector `uses`, cross-file links; queries `who_calls`/`calls_from`/`connectors_used`/`flows_using`/`search_flows`. Synthetic-tested (no real Mule app yet). |
 | 5 — Entity bridge + retrieve | ✅ | `librarian/index.py` (entity bridge + FTS5 search index as a serialized SQLite KU, `rebuild_indexes()`) + `librarian/retrieve.py` (`find_entity`, `cross_source`, `search`, `entity_like`). Source-agnostic; validated on the sample org (341 entity links, 199 FTS docs). |
 
@@ -47,7 +47,7 @@ PY
 
 ### Soon
 3. ~~**Mule digest**~~ — ✅ done (`librarian/digest/mule.py`): flows/sub-flows/connectors graph, `flow-ref` calls, cross-file links, entity-bridge join; queries `who_calls`/`calls_from`/`connectors_used`/`flows_using`/`search_flows`. Synthetic-tested; *validate against a real Mule app when you have one.*
-4. **Validate OmniStudio** — the IP/OmniScript/DataMapper parser is built but provisional (key-driven extraction, synthetic-tested). *Input needed: a small **sanitized** OmniStudio export (a few IPs/OmniScripts/Data Mappers).* Tune `omnistudio.REF_KEYS` + loaders against it.
+4. **Validate OmniStudio reference extraction** — the parser now matches the **real standard metadata format** (`*.os/oip/rpt/ouc-meta.xml` + embedded JSON in `<propertySetConfig>`/`<dataSourceConfig>`), confirmed against a real trial org. But that org has **no populated** scripts/IPs/Data Mappers (one empty FlexCard), so element-level `REF_KEYS` are still unconfirmed. *Input needed: a few real components (build/load some, or a sanitized export).* Then verify `REF_KEYS`.
 
 ### Later
 5. **Phase 4 — Jira/Confluence** — `tools/scraper/` (read-only, recursive-from-root, attachment-text-only) + `digest/{jira,confluence}.py` + `reference/pl_lemmas.sqlite` + FTS. *Input needed: Atlassian access for the user to run the scraper locally.*

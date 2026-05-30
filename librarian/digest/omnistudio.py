@@ -1,41 +1,57 @@
-"""OmniStudio digest — Integration Procedures, OmniScripts, Data Mappers.
+"""OmniStudio digest — Integration Procedures, OmniScripts, Data Mappers, FlexCards.
 
-PROVISIONAL. Built against the documented OmniStudio shapes for BOTH:
-  - the newer "standard" runtime (OmniProcess / OmniDataTransform metadata), and
-  - the older Vlocity managed-package DataPacks (JSON, namespaced records).
+Handles the **standard** OmniStudio metadata format (confirmed against a real
+trial org's metadata describe + a real FlexCard export) AND the older Vlocity
+managed-package DataPacks:
 
-No OmniStudio sample is available in this repo, so this is validated on
-synthetic fixtures only. Reference extraction is **key-driven** (REF_KEYS below),
-so tuning it to a real *sanitized* export is a one-line change rather than a
-rewrite. Names may be standard, custom (__c), or packaged (ns__Name__c) — we
-never infer type from shape; we resolve against known sets.
+  Standard (one XML-meta file per component, definition embedded as JSON):
+    OmniScript            -> *.os-meta.xml
+    Integration Procedure -> *.oip-meta.xml
+    Data Mapper           -> *.rpt-meta.xml
+    FlexCard              -> *.ouc-meta.xml
+  The JSON lives in <propertySetConfig> (and <dataSourceConfig> for the data
+  binding). We extract those fields, parse the JSON, and scan it for references.
+
+  Vlocity (old model): *_DataPack.json with the definition as the JSON body.
+
+The **file format and field layout are real-data-confirmed.** Element-level
+reference *key names* (REF_KEYS) are still partly provisional — the trial org has
+no scripts/IPs/Data Mappers *with* references to confirm them against, so those
+will be tuned when a populated sample is available. Extraction is key-driven, so
+that's a one-line change. Names may be standard, custom (__c), or packaged
+(ns__Name__c); we resolve against known sets, never inferring type from shape.
 """
 from __future__ import annotations
 
 import json
+import xml.etree.ElementTree as ET
 from dataclasses import dataclass, field
 from pathlib import Path
 
 # Reference keys scanned anywhere in an OmniStudio definition (lower-cased).
-# Union of standard + Vlocity spellings; extend when a real export is seen.
 REF_KEYS = {
-    "ip":         {"integrationprocedurekey", "integrationproceduretype"},
+    "ip":         {"integrationprocedurekey", "integrationproceduretype", "ipmethod"},
     "datamapper": {"bundle", "dataraptorbundlename", "drbundlename",
                    "dataraptorinputbundle", "dataraptoroutputbundle"},
     "apex":       {"remoteclass"},
     "lwc":        {"lwcname", "lwccomponentname", "lwccomponentoverride"},
     "object":     {"objectname", "interfaceobjectname", "objectapiname",
-                   "inputobjectname", "outputobjectname"},
+                   "inputobjectname", "outputobjectname", "contextobject"},
 }
 
-# Folder names where OmniStudio metadata is retrieved (standard runtime).
-STANDARD_DIRS = {"omniProcesses": None, "omniDataTransforms": "datamapper"}
+# standard-metadata file suffix -> component type
+SUFFIX_TYPE = {
+    "os": "omniscript", "oip": "integrationprocedure",
+    "rpt": "datamapper", "ouc": "flexcard",
+}
+# XML fields that carry an embedded JSON definition
+_JSON_FIELDS = {"propertysetconfig", "datasourceconfig", "propertysetconfigchunks"}
 
 
 @dataclass
 class OmniComponent:
     name: str
-    otype: str                       # omniscript | integrationprocedure | datamapper
+    otype: str                       # omniscript | integrationprocedure | datamapper | flexcard
     subtype: str = ""
     model: str = ""                  # standard | vlocity
     ip_refs: set = field(default_factory=set)
@@ -46,8 +62,11 @@ class OmniComponent:
     source: str = ""
 
 
+def _local(tag: str) -> str:
+    return tag.rsplit("}", 1)[-1]
+
+
 def _walk(obj):
-    """Yield (lowercased_key, value) for every dict key in nested JSON."""
     if isinstance(obj, dict):
         for k, v in obj.items():
             yield str(k).lower(), v
@@ -68,64 +87,78 @@ def collect_refs(definition) -> dict:
     return out
 
 
-def component_from_definition(name, otype, definition, model="standard",
-                              subtype="", source="") -> OmniComponent:
-    refs = collect_refs(definition)
+def _component(name, otype, refs, model, source) -> OmniComponent:
     return OmniComponent(
-        name=name, otype=otype, subtype=subtype, model=model,
+        name=name, otype=otype, model=model,
         ip_refs=refs["ip"], dm_refs=refs["datamapper"], apex_refs=refs["apex"],
         lwc_refs=refs["lwc"], object_refs=refs["object"], source=source,
     )
 
 
-def _classify_omniprocess(definition) -> str:
-    """OmniProcess covers both OmniScripts and Integration Procedures; the
-    process type field distinguishes them (standard + vlocity spellings)."""
+def parse_standard_meta(path: Path, otype: str) -> OmniComponent:
+    """Parse a standard OmniStudio *-meta.xml: pull every embedded-JSON field
+    (<propertySetConfig>, <dataSourceConfig>, …), parse, and scan for refs."""
+    src = path.read_text("utf-8", errors="replace")
+    name = path.name
+    for suf in (".os-meta.xml", ".oip-meta.xml", ".rpt-meta.xml", ".ouc-meta.xml"):
+        if name.endswith(suf):
+            name = name[: -len(suf)]
+            break
+    refs = {k: set() for k in REF_KEYS}
+    try:
+        root = ET.parse(path).getroot()
+    except ET.ParseError:
+        return _component(name, otype, refs, "standard", src)
+    for el in root.iter():
+        if _local(el.tag).lower() in _JSON_FIELDS and el.text and el.text.strip()[:1] in "{[":
+            try:
+                obj = json.loads(el.text)
+            except json.JSONDecodeError:
+                continue
+            for kind, s in collect_refs(obj).items():
+                refs[kind] |= s
+    return _component(name, otype, refs, "standard", src)
+
+
+def _classify_vlocity(definition) -> str:
+    blob = json.dumps(definition).lower()
     for k, v in _walk(definition):
-        if k in ("omniprocesstype", "type", "omniprocesssubtype") and isinstance(v, str):
-            if "integration" in v.lower():
+        if k in ("omniprocesstype", "type", "vlocityrecordsobjecttype") and isinstance(v, str):
+            vl = v.lower()
+            if "integration" in vl:
                 return "integrationprocedure"
-            if "omniscript" in v.lower() or "script" in v.lower():
+            if "dataraptor" in vl or "datamapper" in vl:
+                return "datamapper"
+            if "omniscript" in vl or "script" in vl:
                 return "omniscript"
+    if "dataraptor" in blob and "omniscript" not in blob:
+        return "datamapper"
     return "omniscript"
 
 
 def parse_omnistudio(base_dir) -> list:
-    """Best-effort loader for both models. Returns [] cleanly when no OmniStudio
-    metadata is present, so it never affects orgs without OmniStudio."""
+    """Parse standard OmniStudio metadata + Vlocity DataPacks. Returns [] cleanly
+    when none is present, so plain orgs are unaffected."""
     base = Path(base_dir)
     out: list = []
 
-    # --- standard runtime: omniProcesses/ and omniDataTransforms/ ---
-    for dirname, forced_type in STANDARD_DIRS.items():
-        d = base / dirname
-        if not d.is_dir():
-            continue
-        for jf in sorted(d.rglob("*.json")):
+    # standard runtime: classify by file suffix
+    for suffix, otype in SUFFIX_TYPE.items():
+        for f in sorted(base.rglob(f"*.{suffix}-meta.xml")):
             try:
-                definition = json.loads(jf.read_text("utf-8", errors="replace"))
-            except (json.JSONDecodeError, OSError):
+                out.append(parse_standard_meta(f, otype))
+            except Exception:                       # pragma: no cover
                 continue
-            name = jf.stem
-            otype = forced_type or _classify_omniprocess(definition)
-            out.append(component_from_definition(
-                name, otype, definition, model="standard",
-                source=jf.read_text("utf-8", errors="replace")))
 
-    # --- Vlocity DataPacks: *_DataPack.json under any vlocity/ export dir ---
+    # Vlocity DataPacks (old model)
     for dp in sorted(base.rglob("*_DataPack.json")):
         try:
             definition = json.loads(dp.read_text("utf-8", errors="replace"))
         except (json.JSONDecodeError, OSError):
             continue
         name = definition.get("name") or dp.stem.replace("_DataPack", "")
-        otype = _classify_omniprocess(definition)
-        # DataРaptorBundle datapacks classify as datamapper
-        vlo = json.dumps(definition).lower()
-        if "dataraptor" in vlo and "omniscript" not in vlo and "integrationprocedure" not in vlo:
-            otype = "datamapper"
-        out.append(component_from_definition(
-            name, otype, definition, model="vlocity",
-            source=dp.read_text("utf-8", errors="replace")))
+        src = dp.read_text("utf-8", errors="replace")
+        out.append(_component(name, _classify_vlocity(definition),
+                              collect_refs(definition), "vlocity", src))
 
     return out
