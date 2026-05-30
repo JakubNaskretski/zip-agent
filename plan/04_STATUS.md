@@ -13,9 +13,10 @@
 | 1 — Librarian core | ✅ | `librarian/{schema,manifest,changelog,session,store,librarian}.py` — transactional engine, invariants I1–I6/I8/I9/I11/I12/I13, atomic ZIP swap |
 | 2 — Bootstrap + master prompt | ✅ | `librarian/bootstrap.py` (`boot()` + auto-checkpoint `Session`), `MASTER_PROMPT.md` (outside the ZIP), `scripts/build_memory.py` |
 | 3 — Salesforce digest | ✅ | `librarian/digest/salesforce.py` (+ `omnistudio.py`) — objects/Apex/triggers/flows/LWC/flexipages/permsets/profiles/permset groups → KUs + typed graph; external stub nodes for standard/packaged objects; queries incl. `grants_on`/`pages_for`/`neighbors`/`dependents`. **OmniStudio (IP/OmniScript/DataMapper, old+new model) = PROVISIONAL** — synthetic-tested, needs a sanitized sample to validate. Validated on a sample org export (200 KUs, 269-node graph). |
+| 3b — Mule digest | ✅ | `librarian/digest/mule.py` — one KU per Mule config file; flow/sub-flow/connector graph; `flow-ref` calls, connector `uses`, cross-file links; queries `who_calls`/`calls_from`/`connectors_used`/`flows_using`/`search_flows`. Synthetic-tested (no real Mule app yet). |
 | 5 — Entity bridge + retrieve | ✅ | `librarian/index.py` (entity bridge + FTS5 search index as a serialized SQLite KU, `rebuild_indexes()`) + `librarian/retrieve.py` (`find_entity`, `cross_source`, `search`, `entity_like`). Source-agnostic; validated on the sample org (341 entity links, 199 FTS docs). |
 
-**Tests:** 51 passing (`.venv/bin/pytest`). Sample org data in `samples/` (gitignored).
+**Tests:** 54 passing (`.venv/bin/pytest`). Sample org data in `samples/` (gitignored).
 
 ---
 
@@ -45,7 +46,7 @@ PY
 3. ~~**Wire ASK into the master prompt**~~ — ✅ done. `MASTER_PROMPT.md` §4.1 documents the routing (classify → entity bridge / graph / FTS → expand minimally → cite KU ids + confidence), with a call table; verified every documented call runs against the sample org.
 
 ### Soon
-3. **Mule digest** (`digest/mule.py`) — the other half of Phase 3. Needs a small Mule repo (or build on synthetic fixtures, validate later). *Input needed: a Mule sample.*
+3. ~~**Mule digest**~~ — ✅ done (`librarian/digest/mule.py`): flows/sub-flows/connectors graph, `flow-ref` calls, cross-file links, entity-bridge join; queries `who_calls`/`calls_from`/`connectors_used`/`flows_using`/`search_flows`. Synthetic-tested; *validate against a real Mule app when you have one.*
 4. **Validate OmniStudio** — the IP/OmniScript/DataMapper parser is built but provisional (key-driven extraction, synthetic-tested). *Input needed: a small **sanitized** OmniStudio export (a few IPs/OmniScripts/Data Mappers).* Tune `omnistudio.REF_KEYS` + loaders against it.
 
 ### Later

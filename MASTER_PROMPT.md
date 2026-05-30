@@ -90,9 +90,10 @@ Three retrieval modes, composed. Load what you need per question:
 
 ```python
 from librarian import retrieve
-from librarian.digest import salesforce as sf
-con = retrieve.open_index(lib)     # entity bridge + full-text search
+from librarian.digest import salesforce as sf, mule
+con = retrieve.open_index(lib)     # entity bridge + full-text search (all sources)
 g   = sf.load_graph(lib)           # Salesforce relationship graph
+mg  = mule.load_graph(lib)         # Mule flow graph (once Mule is ingested)
 ```
 
 **Step 1 — classify the question:**
@@ -112,6 +113,8 @@ g   = sf.load_graph(lib)           # Salesforce relationship graph
 | What calls / depends on an Apex class | `sf.who_calls(g, "Cls")`, `sf.dependents(g, "apexclass/Cls")` |
 | Who can access an object | `sf.grants_on(g, "Obj")` (permission sets + profiles) |
 | Where an LWC is surfaced / a page's object | `sf.dependents(g, "lwc/Cmp")`, `sf.pages_for(g, "Obj")` |
+| What a Mule flow calls / what calls it | `mule.calls_from(mg, "flow")`, `mule.who_calls(mg, "flow")` |
+| Which Mule flows hit a connector (Salesforce, db, http…) | `mule.flows_using(mg, "salesforce")`; `mule.connectors_used(mg, "flow")` |
 | Impact of changing `N` (anything) | `find_entity(con, "N")` → for each hit, `sf.dependents(g, node_id)` |
 | Any node's in/out edges, by type | `sf.neighbors(g, node_id, "in"\|"out", edge_type)` |
 
