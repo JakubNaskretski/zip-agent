@@ -46,14 +46,20 @@ SUFFIX_TYPE = {
 }
 # XML fields that carry an embedded JSON definition
 _JSON_FIELDS = {"propertysetconfig", "datasourceconfig", "propertysetconfigchunks"}
+# structured XML element tags that directly hold a reference (Data Mappers use these)
+_XML_REF_FIELDS = {"inputobjectname": "object", "outputobjectname": "object"}
+# output "object" values that are really data formats, not SObjects
+_OUTPUT_FORMATS = {"json", "xml", "csv", "custom", ""}
 
 
 @dataclass
 class OmniComponent:
-    name: str
+    name: str                        # canonical key: Type_SubType (OS/IP) or Name (DM/card)
     otype: str                       # omniscript | integrationprocedure | datamapper | flexcard
     subtype: str = ""
     model: str = ""                  # standard | vlocity
+    active: bool = True
+    version: float = 0.0
     ip_refs: set = field(default_factory=set)
     dm_refs: set = field(default_factory=set)
     apex_refs: set = field(default_factory=set)
@@ -87,37 +93,69 @@ def collect_refs(definition) -> dict:
     return out
 
 
-def _component(name, otype, refs, model, source) -> OmniComponent:
+def _component(name, otype, refs, model, source, active=True, version=0.0) -> OmniComponent:
     return OmniComponent(
-        name=name, otype=otype, model=model,
+        name=name, otype=otype, model=model, active=active, version=version,
         ip_refs=refs["ip"], dm_refs=refs["datamapper"], apex_refs=refs["apex"],
         lwc_refs=refs["lwc"], object_refs=refs["object"], source=source,
     )
 
 
 def parse_standard_meta(path: Path, otype: str) -> OmniComponent:
-    """Parse a standard OmniStudio *-meta.xml: pull every embedded-JSON field
-    (<propertySetConfig>, <dataSourceConfig>, …), parse, and scan for refs."""
+    """Parse a standard OmniStudio *-meta.xml.
+
+    References come from two places: embedded-JSON fields (<propertySetConfig> at
+    script level AND inside each <omniProcessElements> child — found via recursive
+    iter) for OmniScript/IP/FlexCard, and structured XML tags (inputObjectName,
+    outputObjectName) for Data Mappers. The canonical name is `Type_SubType`
+    (OmniScript/IP — how they're referenced) or `Name` (Data Mapper/FlexCard);
+    the filename carries a version suffix we must not use for resolution.
+    """
     src = path.read_text("utf-8", errors="replace")
-    name = path.name
+    filestem = path.name
     for suf in (".os-meta.xml", ".oip-meta.xml", ".rpt-meta.xml", ".ouc-meta.xml"):
-        if name.endswith(suf):
-            name = name[: -len(suf)]
+        if filestem.endswith(suf):
+            filestem = filestem[: -len(suf)]
             break
     refs = {k: set() for k in REF_KEYS}
     try:
         root = ET.parse(path).getroot()
     except ET.ParseError:
-        return _component(name, otype, refs, "standard", src)
+        return _component(filestem, otype, refs, "standard", src)
+
+    top = {}
+    for e in root:
+        ln = _local(e.tag)
+        if ln not in top:                       # first occurrence of simple fields
+            top[ln] = e.text or ""
+
+    # canonical name
+    typ, sub, nm = top.get("type", ""), top.get("subType", ""), top.get("name", "")
+    if otype in ("omniscript", "integrationprocedure") and typ and sub:
+        cname = f"{typ}_{sub}"
+    else:
+        cname = nm or filestem
+
+    active = top.get("isActive", "true").strip().lower() != "false"
+    try:
+        version = float(top.get("versionNumber", "0") or 0)
+    except ValueError:
+        version = 0.0
+
     for el in root.iter():
-        if _local(el.tag).lower() in _JSON_FIELDS and el.text and el.text.strip()[:1] in "{[":
+        ln = _local(el.tag).lower()
+        txt = el.text or ""
+        if ln in _JSON_FIELDS and txt.strip()[:1] in "{[":
             try:
-                obj = json.loads(el.text)
+                obj = json.loads(txt)
             except json.JSONDecodeError:
                 continue
             for kind, s in collect_refs(obj).items():
                 refs[kind] |= s
-    return _component(name, otype, refs, "standard", src)
+        elif ln in _XML_REF_FIELDS and txt.strip() and txt.strip().lower() not in _OUTPUT_FORMATS:
+            refs[_XML_REF_FIELDS[ln]].add(txt.strip())
+
+    return _component(cname, otype, refs, "standard", src, active=active, version=version)
 
 
 def _classify_vlocity(definition) -> str:
@@ -140,15 +178,24 @@ def parse_omnistudio(base_dir) -> list:
     """Parse standard OmniStudio metadata + Vlocity DataPacks. Returns [] cleanly
     when none is present, so plain orgs are unaffected."""
     base = Path(base_dir)
-    out: list = []
 
     # standard runtime: classify by file suffix
+    standard = []
     for suffix, otype in SUFFIX_TYPE.items():
         for f in sorted(base.rglob(f"*.{suffix}-meta.xml")):
             try:
-                out.append(parse_standard_meta(f, otype))
+                standard.append(parse_standard_meta(f, otype))
             except Exception:                       # pragma: no cover
                 continue
+    # one component per (otype, canonical name): keep the active version, else the
+    # highest versionNumber (OmniScripts/IPs have multiple versions on disk)
+    best: dict = {}
+    for c in standard:
+        key = (c.otype, c.name)
+        cur = best.get(key)
+        if cur is None or (c.active, c.version) > (cur.active, cur.version):
+            best[key] = c
+    out: list = list(best.values())
 
     # Vlocity DataPacks (old model)
     for dp in sorted(base.rglob("*_DataPack.json")):

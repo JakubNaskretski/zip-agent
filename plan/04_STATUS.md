@@ -12,7 +12,7 @@
 |------:|--------|-------------|
 | 1 — Librarian core | ✅ | `librarian/{schema,manifest,changelog,session,store,librarian}.py` — transactional engine, invariants I1–I6/I8/I9/I11/I12/I13, atomic ZIP swap |
 | 2 — Bootstrap + master prompt | ✅ | `librarian/bootstrap.py` (`boot()` + auto-checkpoint `Session`), `MASTER_PROMPT.md` (outside the ZIP), `scripts/build_memory.py` |
-| 3 — Salesforce digest | ✅ | `librarian/digest/salesforce.py` (+ `omnistudio.py`) — objects/Apex/triggers/flows/LWC/flexipages/permsets/profiles/permset groups → KUs + typed graph; external stub nodes for standard/packaged objects; queries incl. `grants_on`/`pages_for`/`neighbors`/`dependents`. **OmniStudio (OmniScript/IP/DataMapper/FlexCard)** — real standard metadata format (`*.os/oip/rpt/ouc-meta.xml` + embedded JSON) confirmed against a trial org + Vlocity DataPacks; element-level reference keys still provisional (need a populated org). Validated on a sample org export (200 KUs, 269-node graph). |
+| 3 — Salesforce digest | ✅ | `librarian/digest/salesforce.py` (+ `omnistudio.py`) — objects/Apex/triggers/flows/LWC/flexipages/permsets/profiles/permset groups → KUs + typed graph; external stub nodes for standard/packaged objects; queries incl. `grants_on`/`pages_for`/`neighbors`/`dependents`. **OmniStudio (OmniScript/IP/DataMapper/FlexCard)** — ✅ validated against real Designer-built components (OmniScript→IP→DataMapper→SObject chain resolves); standard `*.os/oip/rpt/ouc-meta.xml` (nested element JSON + structured DataMapper XML), canonical `Type_SubType` naming, version dedup, + Vlocity DataPack path. Managed/file-based components need OmniStudio's DataPack export (Metadata API can't see them). Validated on a sample org export (200 KUs, 269-node graph). |
 | 3b — Mule digest | ✅ | `librarian/digest/mule.py` — one KU per Mule config file; flow/sub-flow/connector graph; `flow-ref` calls, connector `uses`, cross-file links; queries `who_calls`/`calls_from`/`connectors_used`/`flows_using`/`search_flows`. Synthetic-tested (no real Mule app yet). |
 | 5 — Entity bridge + retrieve | ✅ | `librarian/index.py` (entity bridge + FTS5 search index as a serialized SQLite KU, `rebuild_indexes()`) + `librarian/retrieve.py` (`find_entity`, `cross_source`, `search`, `entity_like`). Source-agnostic; validated on the sample org (341 entity links, 199 FTS docs). |
 
@@ -47,7 +47,7 @@ PY
 
 ### Soon
 3. ~~**Mule digest**~~ — ✅ done (`librarian/digest/mule.py`): flows/sub-flows/connectors graph, `flow-ref` calls, cross-file links, entity-bridge join; queries `who_calls`/`calls_from`/`connectors_used`/`flows_using`/`search_flows`. Synthetic-tested; *validate against a real Mule app when you have one.*
-4. **Validate OmniStudio reference extraction** — the parser now matches the **real standard metadata format** (`*.os/oip/rpt/ouc-meta.xml` + embedded JSON in `<propertySetConfig>`/`<dataSourceConfig>`), confirmed against a real trial org. But that org has **no populated** scripts/IPs/Data Mappers (one empty FlexCard), so element-level `REF_KEYS` are still unconfirmed. *Input needed: a few real components (build/load some, or a sanitized export).* Then verify `REF_KEYS`.
+4. ~~**Validate OmniStudio reference extraction**~~ — ✅ done. Validated against real Designer-built components in the trial org; the OmniScript→IP→DataMapper→SObject chain resolves. Open follow-up: handle managed/file-based components via a **DataPack export** ingest path (Metadata API can't retrieve those) — confirm against a real DataPack when one is available.
 
 ### Later
 5. **Phase 4 — Jira/Confluence** — `tools/scraper/` (read-only, recursive-from-root, attachment-text-only) + `digest/{jira,confluence}.py` + `reference/pl_lemmas.sqlite` + FTS. *Input needed: Atlassian access for the user to run the scraper locally.*
@@ -61,7 +61,7 @@ PY
 
 ## Inputs needed from the user (when relevant)
 - A small **Mule repo** sample → unblocks the Mule digest.
-- A **sanitized OmniStudio export** (a few IPs/OmniScripts/Data Mappers) → validates the provisional OmniStudio parser.
+- A real **OmniStudio DataPack** export → confirms the DataPack ingest path for managed/file-based components (the standard-metadata path is already validated).
 - **Atlassian** access (the user runs the scraper locally) → unblocks Jira/Confluence.
 - Real **top queries** (the eval set, `02_NEXT_STEPS.md` A1) → calibrates retrieve and lemmatization.
 

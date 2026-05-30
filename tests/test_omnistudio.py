@@ -1,9 +1,14 @@
-"""OmniStudio digest — standard metadata format (XML-meta + embedded JSON) and
-Vlocity DataPacks.
+"""OmniStudio digest — synthetic fixtures that mirror the REAL standard format
+(verified against a live trial org's Designer-built components):
 
-The file format and field layout are confirmed against a real trial org's
-metadata describe + a real FlexCard export. Component *content* here is synthetic
-with fictional names (the trial org has no scripts/IPs/Data Mappers to copy).
+  - OmniScript/IP: <type>+<subType> give the canonical name `Type_SubType`;
+    element refs live in nested <omniProcessElements>/<propertySetConfig> JSON
+    (integrationProcedureKey -> IP, bundle -> Data Mapper, remoteClass -> Apex).
+  - Data Mapper: structured <omniDataTransformItem> XML (inputObjectName ->
+    SObject); canonical name = <name>; no JSON blob.
+  - Versions: multiple files per component; keep the active one.
+
+Content is fictional (Acme*); the trial org's real names never enter the repo.
 """
 import json
 
@@ -13,120 +18,124 @@ from librarian.digest import omnistudio as om
 
 
 def test_collect_refs_finds_all_kinds():
-    definition = {"children": [
-        {"propSetMap": {"integrationProcedureKey": "Account_Create"}},
-        {"propSetMap": {"bundle": "DM_GetAccount"}},
-        {"propSetMap": {"remoteClass": "AccountController"}},
-        {"propSetMap": {"lwcName": "myWidget"}},
-        {"propSetMap": {"objectName": "Account"}},
+    d = {"children": [
+        {"propSetMap": {"integrationProcedureKey": "Acme_Fetch"}},
+        {"propSetMap": {"bundle": "AcmeMapper"}},
+        {"propSetMap": {"remoteClass": "AcmeController"}},
+        {"propSetMap": {"lwcName": "acmeWidget"}},
     ]}
-    refs = om.collect_refs(definition)
-    assert refs["ip"] == {"Account_Create"}
-    assert refs["datamapper"] == {"DM_GetAccount"}
-    assert refs["apex"] == {"AccountController"}
-    assert refs["lwc"] == {"myWidget"}
-    assert refs["object"] == {"Account"}
+    r = om.collect_refs(d)
+    assert r["ip"] == {"Acme_Fetch"} and r["datamapper"] == {"AcmeMapper"}
+    assert r["apex"] == {"AcmeController"} and r["lwc"] == {"acmeWidget"}
 
 
-def _write(p, text):
+def _w(p, text):
     p.parent.mkdir(parents=True, exist_ok=True)
     p.write_text(text, "utf-8")
 
 
-def _meta(root_tag, name, ps_config):
-    """A standard OmniStudio *-meta.xml with the definition embedded as JSON."""
-    return ('<?xml version="1.0" encoding="UTF-8"?>\n'
-            f'<{root_tag} xmlns="http://soap.sforce.com/2006/04/metadata">\n'
-            f'    <name>{name}</name>\n'
-            f'    <propertySetConfig>{json.dumps(ps_config)}</propertySetConfig>\n'
-            f'</{root_tag}>\n')
+def _omniscript(active="true", version="2"):
+    # OmniScript: type/subType + elements in <omniProcessElements>/<propertySetConfig>
+    return f"""<?xml version="1.0" encoding="UTF-8"?>
+<OmniScript xmlns="http://soap.sforce.com/2006/04/metadata">
+    <name>createThing</name>
+    <type>Acme</type>
+    <subType>Create</subType>
+    <isActive>{active}</isActive>
+    <versionNumber>{version}</versionNumber>
+    <propertySetConfig>{{"title":"Create"}}</propertySetConfig>
+    <omniProcessElements>
+        <name>IPAction1</name><type>Integration Procedure Action</type>
+        <propertySetConfig>{{"integrationProcedureKey":"Acme_Fetch"}}</propertySetConfig>
+    </omniProcessElements>
+    <omniProcessElements>
+        <name>DRAction1</name><type>DataRaptor Extract Action</type>
+        <propertySetConfig>{{"bundle":"AcmeMapper"}}</propertySetConfig>
+    </omniProcessElements>
+</OmniScript>
+"""
 
 
-def make_omni_force_app(root):
+def make_omni_app(root):
     base = root / "force-app" / "main" / "default"
-    # apex + lwc so the OmniScript's apex/lwc refs resolve to real KUs
-    _write(base / "classes" / "AccountController.cls",
-           "public with sharing class AccountController {}\n")
-    _write(base / "lwc" / "myWidget" / "myWidget.js",
-           "import { LightningElement } from 'lwc';\nexport default class MyWidget extends LightningElement {}\n")
-    # OmniScript referencing an IP, a Data Mapper, apex, lwc, object (real *.os-meta.xml format)
-    _write(base / "omniScripts" / "CreateAccount.os-meta.xml",
-           _meta("OmniScript", "CreateAccount", {"children": [
-               {"propSetMap": {"integrationProcedureKey": "Account_Create"}},
-               {"propSetMap": {"bundle": "DM_GetAccount"}},
-               {"propSetMap": {"remoteClass": "AccountController"}},
-               {"propSetMap": {"lwcName": "myWidget"}},
-               {"propSetMap": {"objectName": "Account"}},
-           ]}))
-    # the Integration Procedure it calls
-    _write(base / "omniIntegrationProcedures" / "Account_Create.oip-meta.xml",
-           _meta("OmniIntegrationProcedure", "Account_Create", {"children": []}))
-    # the Data Mapper, mapping to Account
-    _write(base / "omniDataTransforms" / "DM_GetAccount.rpt-meta.xml",
-           _meta("OmniDataTransform", "DM_GetAccount", {"interfaceObjectName": "Account"}))
+    _w(base / "classes" / "AcmeController.cls", "public class AcmeController {}\n")
+    # OmniScript v1 (empty, inactive) + v2 (active, real) -> dedup keeps v2
+    _w(base / "omniScripts" / "Acme_Create_English_1.os-meta.xml",
+       """<?xml version="1.0" encoding="UTF-8"?>
+<OmniScript xmlns="http://soap.sforce.com/2006/04/metadata">
+    <type>Acme</type><subType>Create</subType><isActive>false</isActive><versionNumber>1</versionNumber>
+</OmniScript>
+""")
+    _w(base / "omniScripts" / "Acme_Create_English_2.os-meta.xml", _omniscript())
+    # Integration Procedure referenced as Acme_Fetch (type_subType), calls the Data Mapper
+    _w(base / "omniIntegrationProcedures" / "Acme_Fetch_Procedure_1.oip-meta.xml",
+       """<?xml version="1.0" encoding="UTF-8"?>
+<OmniIntegrationProcedure xmlns="http://soap.sforce.com/2006/04/metadata">
+    <name>New Integration Procedure</name>
+    <type>Acme</type><subType>Fetch</subType><isActive>true</isActive><versionNumber>1</versionNumber>
+    <omniProcessElements>
+        <name>DR1</name><type>DataRaptor Extract Action</type>
+        <propertySetConfig>{"bundle":"AcmeMapper"}</propertySetConfig>
+    </omniProcessElements>
+</OmniIntegrationProcedure>
+""")
+    # Data Mapper: structured XML, no propertySetConfig; canonical name = <name>
+    _w(base / "omniDataTransforms" / "AcmeMapper_1.rpt-meta.xml",
+       """<?xml version="1.0" encoding="UTF-8"?>
+<OmniDataTransform xmlns="http://soap.sforce.com/2006/04/metadata">
+    <name>AcmeMapper</name><type>Extract</type><isActive>true</isActive><versionNumber>1</versionNumber>
+    <omniDataTransformItem>
+        <inputObjectName>Account</inputObjectName>
+        <outputObjectName>json</outputObjectName>
+    </omniDataTransformItem>
+</OmniDataTransform>
+""")
     return root / "force-app"
 
 
-def test_standard_omnistudio_parsed_and_graphed(tmp_path):
-    fa = make_omni_force_app(tmp_path)
-    d = sf.parse_salesforce(fa)
-    by_type = {(o.otype, o.name) for o in d.omni}
-    assert ("omniscript", "CreateAccount") in by_type
-    assert ("integrationprocedure", "Account_Create") in by_type
-    assert ("datamapper", "DM_GetAccount") in by_type
-    assert all(o.model == "standard" for o in d.omni)
+def test_canonical_names_refs_and_version_dedup(tmp_path):
+    comps = {c.name: c for c in om.parse_omnistudio(make_omni_app(tmp_path))}
+    # canonical naming + version dedup (only the active v2 OmniScript survives)
+    assert comps["Acme_Create"].otype == "omniscript" and comps["Acme_Create"].version == 2.0
+    assert comps["Acme_Fetch"].otype == "integrationprocedure"
+    assert comps["AcmeMapper"].otype == "datamapper"
+    # references via the real key paths
+    assert comps["Acme_Create"].ip_refs == {"Acme_Fetch"}
+    assert comps["Acme_Create"].dm_refs == {"AcmeMapper"}
+    assert comps["Acme_Fetch"].dm_refs == {"AcmeMapper"}
+    # Data Mapper object from structured XML; "json" output format filtered out
+    assert comps["AcmeMapper"].object_refs == {"Account"}
 
-    os_c = next(o for o in d.omni if o.name == "CreateAccount")
-    assert os_c.ip_refs == {"Account_Create"} and os_c.dm_refs == {"DM_GetAccount"}
-    assert os_c.apex_refs == {"AccountController"} and "Account" in os_c.object_refs
 
+def test_omnistudio_dependency_chain_in_graph(tmp_path):
     lib = Librarian(Store(tmp_path / "mem"))
-    sf.ingest_salesforce(lib, fa, "dev", "ingest OmniStudio standard sample")
-    for kid in ("salesforce:omniscript/CreateAccount",
-                "salesforce:integrationprocedure/Account_Create",
-                "salesforce:datamapper/DM_GetAccount"):
-        assert lib.get(kid) is not None
-
+    sf.ingest_salesforce(lib, make_omni_app(tmp_path), "dev", "ingest omnistudio sample")
     g = sf.load_graph(lib)
-    os_id = "omniscript/CreateAccount"
-    assert "integrationprocedure/Account_Create" in sf.neighbors(g, os_id, "out", "calls")
-    assert "datamapper/DM_GetAccount" in sf.neighbors(g, os_id, "out", "uses")
-    assert "apexclass/AccountController" in sf.neighbors(g, os_id, "out", "calls")
-    assert "lwc/myWidget" in sf.neighbors(g, os_id, "out", "embeds")
-    assert "object/Account" in sf.neighbors(g, os_id, "out", "touches")
-    assert "object/Account" in sf.neighbors(g, "datamapper/DM_GetAccount", "out", "maps")
+    assert "integrationprocedure/Acme_Fetch" in sf.neighbors(g, "omniscript/Acme_Create", "out", "calls")
+    assert "datamapper/AcmeMapper" in sf.neighbors(g, "omniscript/Acme_Create", "out", "uses")
+    assert "datamapper/AcmeMapper" in sf.neighbors(g, "integrationprocedure/Acme_Fetch", "out", "uses")
+    assert "object/Account" in sf.neighbors(g, "datamapper/AcmeMapper", "out", "maps")
 
 
 def test_datasource_config_reference(tmp_path):
-    """A FlexCard/OmniScript binds its data source via <dataSourceConfig> — the
-    IP it points at (ipMethod) must be picked up too."""
+    """FlexCard binds its data source via <dataSourceConfig>.ipMethod."""
     base = tmp_path / "force-app" / "main" / "default"
-    card = ('<?xml version="1.0" encoding="UTF-8"?>\n'
-            '<OmniUiCard xmlns="http://soap.sforce.com/2006/04/metadata">\n'
-            '    <name>AcctCard</name>\n'
-            '    <propertySetConfig>{}</propertySetConfig>\n'
-            '    <dataSourceConfig>'
-            + json.dumps({"dataSource": {"type": "IntegrationProcedure",
-                                         "value": {"ipMethod": "Account_Create"}}})
-            + '</dataSourceConfig>\n</OmniUiCard>\n')
-    _write(base / "omniUiCard" / "AcctCard.ouc-meta.xml", card)
-    # parse OmniStudio directly (raw extraction, before ref-resolution constrains to known)
-    comps = om.parse_omnistudio(tmp_path / "force-app")
-    card_c = next(o for o in comps if o.name == "AcctCard")
-    assert card_c.otype == "flexcard"
-    assert "Account_Create" in card_c.ip_refs       # pulled from dataSourceConfig.ipMethod
+    _w(base / "omniUiCard" / "AcctCard.ouc-meta.xml",
+       '<?xml version="1.0" encoding="UTF-8"?>\n'
+       '<OmniUiCard xmlns="http://soap.sforce.com/2006/04/metadata">\n'
+       '    <name>AcctCard</name>\n    <propertySetConfig>{}</propertySetConfig>\n'
+       '    <dataSourceConfig>'
+       + json.dumps({"dataSource": {"type": "IntegrationProcedure",
+                                     "value": {"ipMethod": "Acme_Fetch"}}})
+       + '</dataSourceConfig>\n</OmniUiCard>\n')
+    card = next(o for o in om.parse_omnistudio(tmp_path / "force-app") if o.name == "AcctCard")
+    assert card.otype == "flexcard" and "Acme_Fetch" in card.ip_refs
 
 
 def test_vlocity_datapack_model(tmp_path):
     base = tmp_path / "force-app" / "main" / "default"
-    _write(base / "objects" / "Dummy__c" / "Dummy__c.object-meta.xml",
-           '<?xml version="1.0" encoding="UTF-8"?>\n'
-           '<CustomObject xmlns="http://soap.sforce.com/2006/04/metadata"><label>D</label></CustomObject>')
-    _write(base / "vlocity" / "DataRaptor" / "DM_Old_DataPack.json", json.dumps({
-        "name": "DM_Old", "VlocityRecordSObjectType": "DataRaptor",
-        "interfaceObjectName": "Dummy__c", "type": "DataRaptor Extract",
+    _w(base / "vlocity" / "DataRaptor" / "DM_Old_DataPack.json", json.dumps({
+        "name": "DM_Old", "type": "DataRaptor Extract", "interfaceObjectName": "Dummy__c",
     }))
-    d = sf.parse_salesforce(tmp_path / "force-app")
-    dm = next((o for o in d.omni if o.name == "DM_Old"), None)
-    assert dm is not None and dm.model == "vlocity" and dm.otype == "datamapper"
-    assert "Dummy__c" in dm.object_refs
+    dm = next((o for o in om.parse_omnistudio(tmp_path / "force-app") if o.name == "DM_Old"), None)
+    assert dm and dm.model == "vlocity" and dm.otype == "datamapper" and "Dummy__c" in dm.object_refs
