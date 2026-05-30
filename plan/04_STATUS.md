@@ -13,8 +13,9 @@
 | 1 — Librarian core | ✅ | `librarian/{schema,manifest,changelog,session,store,librarian}.py` — transactional engine, invariants I1–I6/I8/I9/I11/I12/I13, atomic ZIP swap |
 | 2 — Bootstrap + master prompt | ✅ | `librarian/bootstrap.py` (`boot()` + auto-checkpoint `Session`), `MASTER_PROMPT.md` (outside the ZIP), `scripts/build_memory.py` |
 | 3 — Salesforce digest | ✅ | `librarian/digest/salesforce.py` (+ `omnistudio.py`) — objects/Apex/triggers/flows/LWC/flexipages/permsets/profiles/permset groups → KUs + typed graph; external stub nodes for standard/packaged objects; queries incl. `grants_on`/`pages_for`/`neighbors`/`dependents`. **OmniStudio (IP/OmniScript/DataMapper, old+new model) = PROVISIONAL** — synthetic-tested, needs a sanitized sample to validate. Validated on a sample org export (200 KUs, 269-node graph). |
+| 5 — Entity bridge + retrieve | ✅ | `librarian/index.py` (entity bridge + FTS5 search index as a serialized SQLite KU, `rebuild_indexes()`) + `librarian/retrieve.py` (`find_entity`, `cross_source`, `search`, `entity_like`). Source-agnostic; validated on the sample org (341 entity links, 199 FTS docs). |
 
-**Tests:** 46 passing (`.venv/bin/pytest`). Sample org data in `samples/` (gitignored).
+**Tests:** 51 passing (`.venv/bin/pytest`). Sample org data in `samples/` (gitignored).
 
 ---
 
@@ -39,8 +40,9 @@ PY
 ## TODO — picked up in priority order
 
 ### Next (no new inputs needed)
-1. **Entity bridge** (`kb/indexes/entities.sqlite`) — the cross-source join layer. Source-agnostic; turns "which X touches Y" into O(1). Foundational for retrieve and for cross-source value.
-2. **Phase 5 — retrieve / ASK** (`librarian/retrieve.py`) — wire the question-answering path: graph queries first, then FTS for prose. Make the agent actually answerable.
+1. ~~**Entity bridge**~~ — ✅ done. `librarian/index.py` builds a source-agnostic search index (entity bridge + FTS5) as one serialized SQLite KU; `rebuild_indexes()`.
+2. ~~**Retrieve / ASK**~~ — ✅ done. `librarian/retrieve.py`: `find_entity`, `cross_source`, `search` (BM25 + snippets), `entity_like`. Compose with the SF graph queries for answers. *(LLM query-rewrite is the agent's runtime job; embeddings still deferred.)*
+3. **Wire ASK into the master prompt** — document the retrieve/graph composition pattern in `MASTER_PROMPT.md` so the agent routes questions (entity → graph → FTS) consistently. Small, no new code.
 
 ### Soon
 3. **Mule digest** (`digest/mule.py`) — the other half of Phase 3. Needs a small Mule repo (or build on synthetic fixtures, validate later). *Input needed: a Mule sample.*

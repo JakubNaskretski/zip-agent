@@ -121,8 +121,9 @@ class Transaction:
         return self._stage(_Op("ADD", ku=ku, body=body))
 
     def ingest_ku(self, ku: KnowledgeUnit, body="") -> "Transaction":
-        """Digest path: upsert a raw/structured KU (re-ingest). Unchanged
-        content is a no-op (I9); changed content replaces and flags dependents."""
+        """Upsert a derived-or-raw KU (raw/structured/indexes). The digest and the
+        index rebuild both use this. Unchanged content is a no-op (I9); changed
+        content replaces and flags dependents."""
         if not ku.content_hash:
             ku.content_hash = content_hash(body)
         return self._stage(_Op("INGEST", ku=ku, body=body))
@@ -223,9 +224,9 @@ class Transaction:
         errs = validate_ku(ku)
         if errs:
             raise LibrarianError(f"invalid KU {ku.id}: " + "; ".join(errs))
-        if ku.tier not in ("raw", "structured"):
+        if ku.tier not in ("raw", "structured", "indexes"):
             raise LibrarianError(
-                f"ingest_ku is for raw/structured only; {ku.id} is {ku.tier}")
+                f"ingest_ku is for raw/structured/indexes only; {ku.id} is {ku.tier}")
         existing = proj.get(ku.id)
         if (existing and existing.status == "active"
                 and existing.content_hash == ku.content_hash):
