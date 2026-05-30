@@ -42,7 +42,7 @@ PY
 ### Next (no new inputs needed)
 1. ~~**Entity bridge**~~ — ✅ done. `librarian/index.py` builds a source-agnostic search index (entity bridge + FTS5) as one serialized SQLite KU; `rebuild_indexes()`.
 2. ~~**Retrieve / ASK**~~ — ✅ done. `librarian/retrieve.py`: `find_entity`, `cross_source`, `search` (BM25 + snippets), `entity_like`. Compose with the SF graph queries for answers. *(LLM query-rewrite is the agent's runtime job; embeddings still deferred.)*
-3. **Wire ASK into the master prompt** — document the retrieve/graph composition pattern in `MASTER_PROMPT.md` so the agent routes questions (entity → graph → FTS) consistently. Small, no new code.
+3. ~~**Wire ASK into the master prompt**~~ — ✅ done. `MASTER_PROMPT.md` §4.1 documents the routing (classify → entity bridge / graph / FTS → expand minimally → cite KU ids + confidence), with a call table; verified every documented call runs against the sample org.
 
 ### Soon
 3. **Mule digest** (`digest/mule.py`) — the other half of Phase 3. Needs a small Mule repo (or build on synthetic fixtures, validate later). *Input needed: a Mule sample.*

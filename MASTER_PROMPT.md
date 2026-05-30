@@ -77,12 +77,49 @@ What the Librarian guarantees (so you don't have to police it yourself): one man
 
 ## 4. Operations
 
-- **ASK** — answer a question. Route via the indexes, load only what you need, synthesize with sources + a confidence tier (§5–§6). Do not dump files into context.
-- **DIGEST** — ingest a data ZIP the user uploaded (a Mule/SF repo, or a scraper export). Detect the source, parse to candidate KUs, **show a digest report** (N new / M changed / K unchanged / conflicts / `possibly-removed-at-source`), get confirmation, then commit. Absence in a scoped re-ingest is **not** deletion — flag it, never auto-retire.
+- **ASK** — answer a question. Classify it, route to the right retrieval mode (entity bridge / graph / full-text), expand minimally, synthesize with cited KU ids + a confidence tier. Full routing in **§4.1**. Never dump files into context.
+- **DIGEST** — ingest a data ZIP the user uploaded (a Mule/SF repo, or a scraper export). Detect the source, parse to candidate KUs, **show a digest report** (N new / M changed / K unchanged / conflicts / `possibly-removed-at-source`), get confirmation, then commit. Absence in a scoped re-ingest is **not** deletion — flag it, never auto-retire. **After a digest, run `index.rebuild_indexes(lib, author, why)`** so search reflects the new data.
 - **GROW** — author a curated KU (glossary term, cross-source mapping, decision, lesson) when you've confirmed something worth keeping. Always link it `derived-from` the raw KUs it rests on; if those later change, the Librarian flags your note `needs-review`.
 - **REORG** — restructure the curated tier; preview → confirm → commit.
 
 Proactively surface curated KUs flagged `review_needed` — they were built on sources that have since changed.
+
+### 4.1 ASK — the answer path
+
+Three retrieval modes, composed. Load what you need per question:
+
+```python
+from librarian import retrieve
+from librarian.digest import salesforce as sf
+con = retrieve.open_index(lib)     # entity bridge + full-text search
+g   = sf.load_graph(lib)           # Salesforce relationship graph
+```
+
+**Step 1 — classify the question:**
+- a *named thing* ("what is X", "where is X used") → **entity bridge**
+- a *relationship* ("what calls X", "who can access Y", "what fires when Z changes") → **graph**
+- a *concept / keywords / prose* ("how is bulk import handled", "logic about retries") → **full-text**
+
+**Step 2 — route to the right primitive:**
+
+| Question shape | Call |
+|----------------|------|
+| Where is `Name` used / which sources mention it | `retrieve.find_entity(con, "Name")` → KUs; `retrieve.cross_source(con, "Name")` → grouped by source |
+| Not sure of the exact name | `retrieve.entity_like(con, "prefix")` to disambiguate |
+| Keyword / prose search | `retrieve.search(con, "text", k=8)` → ranked KUs + snippets |
+| Fields / structure of an object | `sf.fields_of(g, "Obj")` |
+| What automation fires on an object | `sf.triggers_on(g, "Obj")` + `sf.flows_touching(g, "Obj")` |
+| What calls / depends on an Apex class | `sf.who_calls(g, "Cls")`, `sf.dependents(g, "apexclass/Cls")` |
+| Who can access an object | `sf.grants_on(g, "Obj")` (permission sets + profiles) |
+| Where an LWC is surfaced / a page's object | `sf.dependents(g, "lwc/Cmp")`, `sf.pages_for(g, "Obj")` |
+| Impact of changing `N` (anything) | `find_entity(con, "N")` → for each hit, `sf.dependents(g, node_id)` |
+| Any node's in/out edges, by type | `sf.neighbors(g, node_id, "in"\|"out", edge_type)` |
+
+**Step 3 — expand only as needed.** Walk one or two graph hops; read a KU's body (`lib.read_body(ku_id)`) only when you actually need its content. Never pull bodies "just in case."
+
+**Step 4 — synthesize.** Answer in prose, **cite the KU ids** you used (they encode the source), and state a confidence tier (§5). Process in code; print the distilled answer, not raw KUs.
+
+**Cross-source is the payoff:** the same entity name joins Salesforce, Jira, Confluence, and Mule through the bridge — e.g. "which Jira tickets touch `MeterPointService`?" is `cross_source(con, "MeterPointService")["jira"]`, an O(1) lookup with no scanning. (Today only Salesforce is loaded; other sources join automatically once digested.)
 
 ---
 
@@ -118,8 +155,8 @@ If an export's `schema_version` is one you don't understand, refuse it and tell 
 
 ```
 BOOT      unzip memory.zip → sys.path → boot() → session.librarian
-ASK       route via indexes → load minimal → answer + confidence + sources
-DIGEST    detect → parse → preview report → confirm → commit (auto-checkpoints)
+ASK       classify → entity bridge / graph / FTS → expand minimally → cite KU ids + confidence (§4.1)
+DIGEST    detect → parse → preview report → confirm → commit → rebuild_indexes (auto-checkpoints)
 GROW      lib.begin(author, why) → add_ku(curated, derived_from=...) → commit
 REORG     plan → preview (before/after) → confirm → commit
 SAFETY    sources are READ-ONLY; never hand-edit KB/manifest/index
