@@ -30,6 +30,14 @@ def build(dest="memory.zip", seed_dir=None) -> Path:
     # the engine — travels inside the ZIP so the agent imports it after unpack
     shutil.copytree(REPO / "librarian", staging / "librarian", ignore=_IGNORE)
 
+    # the vendored Salesforce parsing engine — shipped at the ZIP root so the
+    # digest adapter can `import graphbuilder` after unpack (bootstrap.boot() puts
+    # the unpacked root on sys.path). See librarian/digest/graphbuilder.py and
+    # vendor/README.md.
+    gb_src = REPO / "vendor" / "graphbuilder"
+    if gb_src.is_dir():
+        shutil.copytree(gb_src, staging / "graphbuilder", ignore=_IGNORE)
+
     # NOTE: MASTER_PROMPT.md is intentionally NOT included — it is pasted into the
     # agent builder's instructions field and lives outside the ZIP.
 

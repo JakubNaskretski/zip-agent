@@ -1,25 +1,19 @@
-"""OmniStudio digest — Integration Procedures, OmniScripts, Data Mappers, FlexCards.
+"""OmniStudio parsers — Integration Procedures, OmniScripts, Data Mappers, FlexCards.
 
-Handles the **standard** OmniStudio metadata format (confirmed against a real
-trial org's metadata describe + a real FlexCard export) AND the older Vlocity
-managed-package DataPacks:
+Handles two metadata formats:
 
-  Standard (one XML-meta file per component, definition embedded as JSON):
+  Standard — one XML-meta file per component, definition embedded as JSON:
     OmniScript            -> *.os-meta.xml
     Integration Procedure -> *.oip-meta.xml
     Data Mapper           -> *.rpt-meta.xml
     FlexCard              -> *.ouc-meta.xml
   The JSON lives in <propertySetConfig> (and <dataSourceConfig> for the data
-  binding). We extract those fields, parse the JSON, and scan it for references.
+  binding); it is parsed and scanned for references by known keys (REF_KEYS).
 
-  Vlocity (old model): *_DataPack.json with the definition as the JSON body.
+  Vlocity (legacy) — *_DataPack.json with the definition as the JSON body.
 
-The **file format and field layout are real-data-confirmed.** Element-level
-reference *key names* (REF_KEYS) are still partly provisional — the trial org has
-no scripts/IPs/Data Mappers *with* references to confirm them against, so those
-will be tuned when a populated sample is available. Extraction is key-driven, so
-that's a one-line change. Names may be standard, custom (__c), or packaged
-(ns__Name__c); we resolve against known sets, never inferring type from shape.
+Names may be standard, custom (__c), or packaged (ns__Name__c); references resolve
+against known node sets rather than inferring type from shape.
 """
 from __future__ import annotations
 
@@ -27,6 +21,8 @@ import json
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass, field
 from pathlib import Path
+
+from .xmlutil import local_name as _local
 
 # Reference keys scanned anywhere in an OmniStudio definition (lower-cased).
 REF_KEYS = {
@@ -66,10 +62,6 @@ class OmniComponent:
     lwc_refs: set = field(default_factory=set)
     object_refs: set = field(default_factory=set)
     source: str = ""
-
-
-def _local(tag: str) -> str:
-    return tag.rsplit("}", 1)[-1]
 
 
 def _walk(obj):
