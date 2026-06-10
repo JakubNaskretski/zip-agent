@@ -18,7 +18,7 @@ from collections import defaultdict
 from pathlib import Path
 
 from librarian import Librarian, Store
-from librarian.digest import salesforce as sf
+from librarian.digest import graphbuilder as sf
 
 TYPE_FOLDER = {
     "object": "Objects", "apexclass": "Apex", "trigger": "Triggers", "flow": "Flows",
@@ -76,9 +76,10 @@ def export(force_app, out_dir):
     lookups, looked_up = defaultdict(set), defaultdict(set)
     for e in g["edges"]:
         if e["type"] == "field_of":
-            fn = nodes.get(e["dst"])
+            fn = nodes.get(e["src"])          # graph-builder: field --field_of--> object
             if fn:
-                fields[e["src"]].append((fn["label"], fn.get("ftype", "")))
+                fields[e["dst"]].append((_name(fn["id"]).split(".", 1)[-1],
+                                         fn.get("field_type", fn.get("ftype", ""))))
         elif e["type"] == "lookup":
             s = _display(e["src"])
             lookups[s].add(e["dst"]); looked_up[e["dst"]].add(s)
