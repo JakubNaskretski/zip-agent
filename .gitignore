@@ -24,3 +24,7 @@ dist/
 # local-only working notes
 *.local.md
 obsidian-vault/
+
+# internal agent instructions / rules — keep local, never track (see ~/.claude/CLAUDE.md)
+CLAUDE.md
+CONTRACT.md
