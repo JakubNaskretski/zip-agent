@@ -32,7 +32,7 @@ If you're picking this up fresh (in a new chat session or on the web):
 Single-project, single-tenant. Knowledge spans:
 
 - **Mulesoft repository** (parsed locally) — answer "what does this flow do?", generate MUnit tests, identify cross-flow dependencies
-- **Salesforce repository** (parsed locally) — answer questions about Apex/objects/triggers/flows, suggest best practices
+- **Salesforce repository** (parsed locally by the vendored [graph-builder](vendor/) metadata-graph engine) — answer questions about Apex/objects/triggers/flows, suggest best practices
 - **Jira** (scraped on-prem via the agent's read-only scraper + user token) — answer questions about tickets, find tickets touching specific services
 - **Confluence** (same pattern as Jira; recursive crawl from a root) — answer prose questions about project documentation
 - **Domain** (built-in) — domain knowledge for the sector regulatory context

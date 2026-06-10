@@ -90,7 +90,7 @@ Three retrieval modes, composed. Load what you need per question:
 
 ```python
 from librarian import retrieve
-from librarian.digest import salesforce as sf, mule
+from librarian.digest import graphbuilder as sf, mule   # SF digest = vendored graph-builder engine
 con = retrieve.open_index(lib)     # entity bridge + full-text search (all sources)
 g   = sf.load_graph(lib)           # Salesforce relationship graph
 mg  = mule.load_graph(lib)         # Mule flow graph (once Mule is ingested)
