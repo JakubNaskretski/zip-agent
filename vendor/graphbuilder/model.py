@@ -38,6 +38,17 @@ NODE_TYPES = {
     # `calls` (flow->flow via <flow-ref>) and `uses` (flow->connector) reuse the
     # existing edge vocabulary. ----
     "muleflow", "muleconnector",
+    # Phase-3 Mule taxonomy. APIkit/API surface (router/config/spec/resource),
+    # flow source triggers (HTTP listener / scheduler / generic connector source),
+    # configuration (property files + KEYS ONLY — property values are never
+    # captured, per the names-only rule — and named global configs), and build
+    # metadata (pom dependencies + the app descriptor; `muleartifactdescriptor/app`
+    # is a per-build singleton, mirroring the one-app-per-tree assumption that
+    # `muleflow/<name>` ids already make).
+    "apikitrouter", "apikitconfig", "apispec", "apiresource",
+    "httplistener", "scheduler", "mulesource",
+    "propertyfile", "propertykey", "globalconfig",
+    "pomdependency", "muleartifactdescriptor",
 }
 EDGE_TYPES = {
     "field_of", "lookup", "on", "calls", "references", "touches", "uses",
@@ -49,6 +60,12 @@ EDGE_TYPES = {
     # cross-source join; never emitted by a build) ----
     "child-of", "links-to", "attaches", "labeled", "mentions", "authored-by",
     "assigned-to", "documents",
+    # ---- MuleSoft Phase-3 taxonomy (`reads`, `implements` and `contains` are
+    # reused from the shared vocabulary above): APIkit routing (router->flow /
+    # config->spec / spec->resource), source triggers (flow->listener|source),
+    # properties (app|config->file, file->key), config refs, build deps. ----
+    "routesto", "boundto", "declares", "exposedby", "triggeredby",
+    "loads", "defineskey", "usesconfig", "securedby", "dependson",
 }
 
 

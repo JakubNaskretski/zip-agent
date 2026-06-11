@@ -143,8 +143,13 @@ def make_apikit_app(root):
 
 def test_apikit_app_graph_and_diagnostics(tmp_path):
     d = mule.parse_mule(make_apikit_app(tmp_path))
-    # the config-only file declares no flows -> not a file KU
-    assert {f.rel for f in d.files} == {"acme-orders-api.xml", "orders-impl.xml"}
+    # Phase 3: the config-only file is a file KU too — its global-config /
+    # property-load declarations are what you retrieve it for (pre-Phase-3 it
+    # was skipped for declaring no flows)
+    assert {f.rel for f in d.files} == {"acme-orders-api.xml", "orders-impl.xml",
+                                        "global-config.xml"}
+    by_rel = {f.rel: f for f in d.files}
+    assert by_rel["global-config.xml"].entities == ["dbConfig", "httpListenerConfig"]
     assert d.errors == [] and d.unresolved == []          # well-formed -> clean build
     ids = {n["id"]: n for n in d.graph["nodes"]}
     edges = {(e["src"], e["type"], e["dst"]) for e in d.graph["edges"]}
@@ -168,3 +173,144 @@ def test_apikit_app_ingest_queries(tmp_path):
     # the API file references the impl file via its cross-file flow-refs
     links = {l["to"] for l in lib.get("mule:acme-orders-api.xml").links}
     assert "mule:orders-impl.xml" in links
+
+
+# --- Phase-3 app: authentic APIkit naming + RAML + properties + build files -- #
+# Fictional Acme data only. Engine pin 4a59b97 (Phase-3 Mule taxonomy).
+P3_API = """<?xml version="1.0" encoding="UTF-8"?>
+<mule xmlns="http://www.mulesoft.org/schema/mule/core"
+      xmlns:http="http://www.mulesoft.org/schema/mule/http"
+      xmlns:apikit="http://www.mulesoft.org/schema/mule/mule-apikit">
+  <flow name="acme-orders-main">
+    <http:listener config-ref="httpListenerConfig" path="/api/*"/>
+    <apikit:router config-ref="orders-config"/>
+  </flow>
+  <flow name="get:\\orders:orders-config">
+    <flow-ref name="listOrders"/>
+  </flow>
+  <flow name="get:\\orders\\(orderId):orders-config">
+    <flow-ref name="getOrder"/>
+  </flow>
+</mule>"""
+
+P3_IMPL = """<?xml version="1.0" encoding="UTF-8"?>
+<mule xmlns="http://www.mulesoft.org/schema/mule/core"
+      xmlns:db="http://www.mulesoft.org/schema/mule/db">
+  <flow name="listOrders">
+    <db:select config-ref="dbConfig"><db:sql>SELECT 1</db:sql></db:select>
+  </flow>
+  <flow name="getOrder">
+    <db:select config-ref="dbConfig"/>
+  </flow>
+  <flow name="nightlySync">
+    <scheduler>
+      <scheduling-strategy><fixed-frequency frequency="60000"/></scheduling-strategy>
+    </scheduler>
+    <db:select config-ref="dbConfig" target="${batch.target}"/>
+  </flow>
+</mule>"""
+
+P3_GLOBAL = """<?xml version="1.0" encoding="UTF-8"?>
+<mule xmlns="http://www.mulesoft.org/schema/mule/core"
+      xmlns:http="http://www.mulesoft.org/schema/mule/http"
+      xmlns:db="http://www.mulesoft.org/schema/mule/db"
+      xmlns:apikit="http://www.mulesoft.org/schema/mule/mule-apikit">
+  <configuration-properties file="config-dev.yaml"/>
+  <http:listener-config name="httpListenerConfig"/>
+  <db:config name="dbConfig">
+    <db:my-sql-connection host="${db.host}" password="${secure::db.password}"/>
+  </db:config>
+  <apikit:config name="orders-config" raml="orders.raml"/>
+</mule>"""
+
+P3_RAML = """#%RAML 1.0
+title: Acme Orders API
+/orders:
+  get:
+  /{orderId}:
+    get:
+"""
+
+P3_YAML = "db:\n  host: localhost\nbatch:\n  target: orders\n"
+
+P3_POM = """<?xml version="1.0"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0">
+  <artifactId>acme-orders-api</artifactId>
+  <dependencies>
+    <dependency>
+      <groupId>org.mule.connectors</groupId>
+      <artifactId>mule-db-connector</artifactId>
+    </dependency>
+  </dependencies>
+</project>"""
+
+P3_DESCRIPTOR = '{"name": "acme-orders-api", "minMuleVersion": "4.4.0", "secureProperties": ["db.password"]}'
+
+
+def make_phase3_app(root):
+    base = root / "src" / "main" / "mule"
+    base.mkdir(parents=True)
+    (base / "api.xml").write_text(P3_API, "utf-8")
+    (base / "impl.xml").write_text(P3_IMPL, "utf-8")
+    (base / "global.xml").write_text(P3_GLOBAL, "utf-8")
+    res = root / "src" / "main" / "resources"
+    (res / "api").mkdir(parents=True)
+    (res / "api" / "orders.raml").write_text(P3_RAML, "utf-8")
+    (res / "config-dev.yaml").write_text(P3_YAML, "utf-8")
+    (root / "pom.xml").write_text(P3_POM, "utf-8")
+    (root / "mule-artifact.json").write_text(P3_DESCRIPTOR, "utf-8")
+    return root
+
+
+def test_phase3_support_files_and_kus(tmp_path):
+    lib = Librarian(Store(tmp_path / "mem"))
+    rep, d = mule.ingest_mule(lib, make_phase3_app(tmp_path), "dev", "ingest phase3 app")
+    assert rep.ok
+    # config-file KUs unchanged; support files get their own raw KUs
+    assert {f.rel for f in d.files} == {"api.xml", "impl.xml", "global.xml"}
+    assert {f.rel for f in d.support_files} == {
+        "resources/api/orders.raml", "resources/config-dev.yaml",
+        "pom.xml", "mule-artifact.json"}
+    assert lib.get("mule:resources/api/orders.raml") is not None
+    assert lib.get("mule:pom.xml") is not None
+    # parsed names land as entities (property keys, resource paths)
+    assert "db.host" in lib.get("mule:resources/config-dev.yaml").entities
+    assert "/orders" in lib.get("mule:resources/api/orders.raml").entities
+    assert d.errors == [] and d.unresolved == []
+
+
+def test_phase3_queries(tmp_path):
+    lib = Librarian(Store(tmp_path / "mem"))
+    mule.ingest_mule(lib, make_phase3_app(tmp_path), "dev", "ingest phase3 app")
+    g = mule.load_graph(lib)
+    assert mule.flow_for_resource(g, "GET", "/orders") == ["get:\\orders:orders-config"]
+    assert mule.flow_for_resource(g, "get", "/orders/{orderId}") \
+        == ["get:\\orders\\(orderId):orders-config"]
+    assert mule.flows_exposed_on(g, "/api/*") == [
+        {"flow": "acme-orders-main", "path": "/api/*", "config": "httpListenerConfig"}]
+    eps = {e["flow"]: e for e in mule.entrypoints(g)}
+    assert eps["acme-orders-main"]["kind"] == "httplistener"
+    assert eps["nightlySync"] == {"flow": "nightlySync", "kind": "scheduler",
+                                  "detail": "60000"}
+    assert mule.flows_reading(g, "batch.target") == ["nightlySync"]
+    assert mule.keys_read_by(g, "nightlySync") == ["batch.target"]
+    assert {r["path"]: r["methods"] for r in mule.api_resources(g)} == {
+        "/orders": ["get"], "/orders/{orderId}": ["get"]}
+    assert set(mule.routes_of(g, "orders-config")) == {
+        "get:\\orders:orders-config", "get:\\orders\\(orderId):orders-config"}
+    assert mule.configs_used(g, "listOrders") == ["dbConfig"]
+    assert mule.secure_keys(g) == ["db.password"]
+    assert mule.app_dependencies(g) == ["org.mule.connectors:mule-db-connector"]
+    # Phase-1 helpers keep working on the same graph (back-compat freeze)
+    assert mule.who_calls(g, "listOrders") == ["get:\\orders:orders-config"]
+    assert "db" in mule.connectors_used(g, "nightlySync")
+
+
+def test_phase3_entity_bridge(tmp_path):
+    lib = Librarian(Store(tmp_path / "mem"))
+    mule.ingest_mule(lib, make_phase3_app(tmp_path), "dev", "ingest phase3 app")
+    rebuild_indexes(lib, "dev", "build index")
+    con = retrieve.open_index(lib)
+    # a property key resolves to the file that defines it
+    hits = {h["ku_id"] for h in retrieve.find_entity(con, "db.host")}
+    assert "mule:resources/config-dev.yaml" in hits

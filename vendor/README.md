@@ -15,11 +15,11 @@ its always-on regex backend).
 | | |
 |---|---|
 | Source | `graph-builder` (private sibling repo) |
-| Pinned commit | `51cf94a08abcb61ba0a4a00b0cfb0638aa88027b` |
-| Pinned tip | "feat(mule): MuleSoft source" — `feat/mule-source` branch (pre-merge; re-pin to the merge SHA once merged to `main`) |
+| Pinned commit | `4a59b97b357f3f8d96bf310cd12e2d8d7e9cc0c5` |
+| Pinned tip | "Merge branch 'feat/mule-taxonomy'" — `main` merge commit (Phase-3 Mule taxonomy) |
 | Vendored on | 2026-06-11 |
 | Scope | the `graphbuilder/` package only — no tests, no scripts |
-| Coverage | 26 Salesforce extractors (objects/fields, Apex+methods, triggers, flows+elements, LWC, Aura, Visualforce, flexipages, layouts, perm sets/profiles/groups, sharing rules, approval processes, reports, rules, OmniStudio, labels, …) + the Mule extractor (`graphbuilder/mulesoft` + `extractors/mule`: flow/sub-flow + flow-ref/connector graph). Confluence + Jira subpackages are included for the planned Phase-4 collectors. |
+| Coverage | 26 Salesforce extractors (objects/fields, Apex+methods, triggers, flows+elements, LWC, Aura, Visualforce, flexipages, layouts, perm sets/profiles/groups, sharing rules, approval processes, reports, rules, OmniStudio, labels, …) + the Mule extractors (`graphbuilder/mulesoft` + `extractors/{mule,raml,muleprops,mulebuild}`: flow/flow-ref/connector graph, APIkit surface incl. RAML specs/resources, source triggers, global configs, property files/keys, pom + descriptor build metadata). Confluence + Jira subpackages are included for the planned Phase-4 collectors. |
 
 The pin is also recorded in code (`librarian/digest/graphbuilder.py:_VENDORED_SHA`)
 and at runtime in the built-in KU `agent:tool/graphbuilder`.

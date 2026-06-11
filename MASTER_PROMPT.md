@@ -115,6 +115,10 @@ mg  = mule.load_graph(lib)         # Mule flow graph (once Mule is ingested)
 | Where an LWC is surfaced / a page's object | `sf.dependents(g, "lwc/Cmp")`, `sf.pages_for(g, "Obj")` |
 | What a Mule flow calls / what calls it | `mule.calls_from(mg, "flow")`, `mule.who_calls(mg, "flow")` |
 | Which Mule flows hit a connector (Salesforce, db, http…) | `mule.flows_using(mg, "salesforce")`; `mule.connectors_used(mg, "flow")` |
+| What handles an API operation / the declared API surface | `mule.flow_for_resource(mg, "get", "/orders")`; `mule.api_resources(mg)`; `mule.routes_of(mg, "apikit-config")` |
+| What's exposed on which HTTP path / all Mule entry points | `mule.flows_exposed_on(mg, "/api/*")`; `mule.entrypoints(mg)` (listeners + schedulers + queue sources) |
+| What reads a property key / what a flow reads / secret-bearing keys | `mule.flows_reading(mg, "db.host")`, `mule.keys_read_by(mg, "flow")`, `mule.secure_keys(mg)` (key NAMES only — values are never captured) |
+| A Mule flow's configs / the app's connector dependencies | `mule.configs_used(mg, "flow")`; `mule.app_dependencies(mg)` |
 | Impact of changing `N` (anything) | `find_entity(con, "N")` → for each hit, `sf.dependents(g, node_id)` |
 | Any node's in/out edges, by type | `sf.neighbors(g, node_id, "in"\|"out", edge_type)` |
 

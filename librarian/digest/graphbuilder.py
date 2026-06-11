@@ -10,8 +10,8 @@ OmniStudio, labels, …) — a strict superset of the old digest's coverage.
 Vendoring pin (the graph-builder commit this engine was copied from — see
 ``vendor/README.md``):
 
-    51cf94a08abcb61ba0a4a00b0cfb0638aa88027b   (2026-06-11, "feat(mule): MuleSoft
-    source" — feat/mule-source branch tip; re-pin to the merge SHA once merged)
+    4a59b97b357f3f8d96bf310cd12e2d8d7e9cc0c5   (2026-06-11, "Merge branch
+    'feat/mule-taxonomy'" — main; Phase-3 Mule taxonomy)
 
 What the adapter does (the §14.1 ``parse → to_kus → ingest`` contract):
 
@@ -63,7 +63,7 @@ from graphbuilder import persistence as _gb_persistence
 from graphbuilder.extractors import all_extractors as _gb_all_extractors
 
 # pin recorded in the built-in tool KU (and echoed in this module's docstring)
-_VENDORED_SHA = "51cf94a08abcb61ba0a4a00b0cfb0638aa88027b"
+_VENDORED_SHA = "4a59b97b357f3f8d96bf310cd12e2d8d7e9cc0c5"
 _VENDORED_AT = "2026-06-11"
 
 GRAPH_ID = "salesforce:graph/sf"
