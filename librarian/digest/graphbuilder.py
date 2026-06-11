@@ -7,10 +7,11 @@ flows + flow-elements, LWC, Aura, Visualforce, flexipages, layouts, permission
 sets/profiles/groups, sharing rules, approval processes, reports, rules,
 OmniStudio, labels, …) — a strict superset of the old digest's coverage.
 
-Vendoring pin (the graph-builder ``main`` merge commit this engine was copied
-from — see ``vendor/README.md``):
+Vendoring pin (the graph-builder commit this engine was copied from — see
+``vendor/README.md``):
 
-    5fa55ccc155fdc839c5f6f44e8ced2bf1b478bae   (2026-06-10, "Merge pull request #6")
+    51cf94a08abcb61ba0a4a00b0cfb0638aa88027b   (2026-06-11, "feat(mule): MuleSoft
+    source" — feat/mule-source branch tip; re-pin to the merge SHA once merged)
 
 What the adapter does (the §14.1 ``parse → to_kus → ingest`` contract):
 
@@ -62,8 +63,8 @@ from graphbuilder import persistence as _gb_persistence
 from graphbuilder.extractors import all_extractors as _gb_all_extractors
 
 # pin recorded in the built-in tool KU (and echoed in this module's docstring)
-_VENDORED_SHA = "5fa55ccc155fdc839c5f6f44e8ced2bf1b478bae"
-_VENDORED_AT = "2026-06-10"
+_VENDORED_SHA = "51cf94a08abcb61ba0a4a00b0cfb0638aa88027b"
+_VENDORED_AT = "2026-06-11"
 
 GRAPH_ID = "salesforce:graph/sf"
 GRAPH_PATH = "kb/structured/salesforce/graph.json"

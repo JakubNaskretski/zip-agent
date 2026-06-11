@@ -32,6 +32,12 @@ NODE_TYPES = {
     # ---- Jira source (a third, SEPARATE graph; see graphbuilder/jira) ----
     # Same content-capture exception: issue nodes carry the description text inline.
     "jiraproject", "jiraissue", "jirauser", "jiralabel",
+    # ---- MuleSoft source (a fourth, SEPARATE graph; see graphbuilder/mulesoft +
+    # extractors/mule). Structural names only (no content capture) — a static
+    # src/main/mule XML tree, parsed like a force-app with no remote collect.
+    # `calls` (flow->flow via <flow-ref>) and `uses` (flow->connector) reuse the
+    # existing edge vocabulary. ----
+    "muleflow", "muleconnector",
 }
 EDGE_TYPES = {
     "field_of", "lookup", "on", "calls", "references", "touches", "uses",

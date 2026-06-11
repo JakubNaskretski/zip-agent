@@ -6,19 +6,20 @@ in its sandbox (no network, no `pip install` from PyPI).
 
 ## graphbuilder/
 
-The Salesforce metadata-graph engine — the parsing backend for the Salesforce
-digest (`librarian/digest/graphbuilder.py`). Pure Python, **stdlib-only at
-runtime** (the optional tree-sitter AST Apex backend is *not* vendored; the
-engine falls back to its always-on regex backend).
+The metadata-graph engine — the parsing backend for the Salesforce digest
+(`librarian/digest/graphbuilder.py`) and the Mule digest
+(`librarian/digest/mule.py`). Pure Python, **stdlib-only at runtime** (the
+optional tree-sitter AST Apex backend is *not* vendored; the engine falls back to
+its always-on regex backend).
 
 | | |
 |---|---|
 | Source | `graph-builder` (private sibling repo) |
-| Pinned commit | `5fa55ccc155fdc839c5f6f44e8ced2bf1b478bae` |
-| Pinned `main` tip | "Merge pull request #6" (Jira source) |
-| Vendored on | 2026-06-10 |
+| Pinned commit | `51cf94a08abcb61ba0a4a00b0cfb0638aa88027b` |
+| Pinned tip | "feat(mule): MuleSoft source" — `feat/mule-source` branch (pre-merge; re-pin to the merge SHA once merged to `main`) |
+| Vendored on | 2026-06-11 |
 | Scope | the `graphbuilder/` package only — no tests, no scripts |
-| Coverage | 26 Salesforce extractors (objects/fields, Apex+methods, triggers, flows+elements, LWC, Aura, Visualforce, flexipages, layouts, perm sets/profiles/groups, sharing rules, approval processes, reports, rules, OmniStudio, labels, …). Confluence + Jira subpackages are included for the planned Phase-4 collectors. |
+| Coverage | 26 Salesforce extractors (objects/fields, Apex+methods, triggers, flows+elements, LWC, Aura, Visualforce, flexipages, layouts, perm sets/profiles/groups, sharing rules, approval processes, reports, rules, OmniStudio, labels, …) + the Mule extractor (`graphbuilder/mulesoft` + `extractors/mule`: flow/sub-flow + flow-ref/connector graph). Confluence + Jira subpackages are included for the planned Phase-4 collectors. |
 
 The pin is also recorded in code (`librarian/digest/graphbuilder.py:_VENDORED_SHA`)
 and at runtime in the built-in KU `agent:tool/graphbuilder`.
