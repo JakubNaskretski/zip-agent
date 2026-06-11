@@ -25,6 +25,11 @@ dist/
 *.local.md
 obsidian-vault/
 
+# private/ — local-only, never tracked: design plans, analysis notes, todos,
+# example/sample data, and anything not strictly part of the shippable agent.
+# This is the distinguishable home for non-agent material (see README).
+/private/
+
 # internal agent instructions / rules — keep local, never track (see ~/.claude/CLAUDE.md)
 CLAUDE.md
 CONTRACT.md

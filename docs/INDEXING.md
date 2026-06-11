@@ -193,7 +193,7 @@ for doc in scraped_docs:
         lemmatize(); synonym_build(); entity_extract(); write_to_db()
 ```
 
-The analyzed agent computed `content_hash` per file and **never used it** (RebuildIndexes.py:252 — see `../analysis/components/01_indexing.md`). We will actually use ours. Incremental rebuilds should run in seconds for "I edited 3 Confluence pages" cases, not minutes.
+The analyzed agent computed `content_hash` per file and **never used it** — the rebuild step recomputed everything regardless. We will actually use ours. Incremental rebuilds should run in seconds for "I edited 3 Confluence pages" cases, not minutes.
 
 ## Quality bar
 
@@ -204,4 +204,4 @@ For v1 we'll define acceptance based on a hand-curated evaluation set:
 - **10 SF classes** → entity graph correctly identifies field references inside Apex (tree-sitter correctness)
 - **20 Polish lemmatization spot-checks** → stanza/spacy gets the lemma right ≥ 95%
 
-The eval set itself is the most valuable thing to build before any indexer code. See `02_NEXT_STEPS.md`.
+The eval set itself is the most valuable thing to build before any indexer code.

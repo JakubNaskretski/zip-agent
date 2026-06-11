@@ -6,7 +6,7 @@ never hand-edits files, the manifest, or an index. A change is staged
 ``move_ku``), validated (``preview``), and applied atomically (``commit``) — or
 rejected with nothing written.
 
-Invariant map (see plan/03_ARCHITECTURE.md §3.2):
+Invariant map (see docs/ARCHITECTURE.md §3.2):
   I1  single writer        — only commit calls Manifest.save
   I2  computed stats        — Manifest.stats (never stored)
   I3  stable ids            — add refuses to clobber an active id; move re-keys + re-points

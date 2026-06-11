@@ -1,8 +1,8 @@
-# Architecture — Living-Memory Agent (v2 framing)
+# Architecture — Living-Memory Agent
 
-**Status:** supersedes the *two-codebase / external-builder* assumption in [`00_PLAN.md`](00_PLAN.md) §3 and the *dual-platform* assumptions inherited from the studied framework. The per-source indexing logic in [`01_INDEXING.md`](01_INDEXING.md) is **kept**, but relocated to run inside the agent's own digest step instead of an external builder.
+**Status:** the precise, current architecture for the agent. The per-source indexing logic in [`INDEXING.md`](INDEXING.md) is part of it, relocated to run inside the agent's own digest step (in-sandbox) rather than an external builder. Earlier two-codebase / dual-platform framing has been dropped.
 
-This doc is the precise architecture for the agent we are actually building. It is grounded in the verification findings in [`../analysis/`](../analysis/) — every "we do it this way" points back to a specific failure we documented in the framework we studied.
+This document is the canonical architecture for the agent we are building. It is grounded in our verification of an existing framework we studied — every "we do it this way" points back to a specific failure we documented there.
 
 ---
 
@@ -10,7 +10,7 @@ This doc is the precise architecture for the agent we are actually building. It 
 
 The agent runs on a **single enterprise code-interpreter host** (a large reasoning model with a Python sandbox; we deliberately do **not** hardcode which model — it may be one GPT-5-class model today and a different one tomorrow). It has **no persistent memory except one ZIP** — that ZIP *is* its memory. The agent loads the ZIP at session start, runs Python tools that live inside it, and emits an updated ZIP that becomes the new memory. Data enters manually: Salesforce and Mule **repos** are handed in as ZIPs; Jira and Confluence are **scraped on the user's machine** by a local script the agent provides, then handed back as an export ZIP. The agent **digests everything in-sandbox** and is allowed to **grow and reorganize its own knowledge** — but only through a single governed method (the *Librarian*), because the model cannot be trusted to keep the structure clean by hand. Beyond the raw sources, the agent maintains an **evolving curated layer** (glossary, cross-source mappings, decisions, lessons) that is the "keep the most important things" mechanism.
 
-The four deltas vs. the existing `plan/`:
+Four defining choices that shape everything below:
 
 | # | Delta | Consequence |
 |---|-------|-------------|
@@ -204,7 +204,7 @@ memory.zip                          # the agent's entire persistent memory (the 
 │   └── digest/                     # ingestion: raw export ZIP → staged KUs
 │       ├── detect.py               # identify source type of an incoming data ZIP
 │       ├── jira.py / confluence.py # normalize scraped exports → doc KUs
-│       ├── mule.py / salesforce.py # parse repos → raw KUs + structured graph
+│       ├── mule.py / graphbuilder.py # parse repos → raw KUs + structured graph (SF via vendored vendor/graphbuilder/)
 │       └── normalize_pl.py         # light Polish lemmatizer (baked dict + stemmer), used build+query
 │
 ├── kb/                             # the knowledge, by tier (§2.1)
@@ -295,7 +295,7 @@ The safety net is structural: because every commit lands via an atomic swap and 
 
 ## 7. Indexing (in-sandbox, per source)
 
-The per-source strategy from [`01_INDEXING.md`](01_INDEXING.md) holds — it just runs in `digest/` + `index.py` now instead of an external builder. Summary:
+The per-source strategy from [`INDEXING.md`](INDEXING.md) holds — it just runs in `digest/` + `index.py` now instead of an external builder. Summary:
 
 | Source | Shape | Mechanism | Runtime query |
 |--------|-------|-----------|---------------|
@@ -313,7 +313,7 @@ You chose **digest-in-sandbox**, accepting that heavy Polish NLP (stanza/spaCy +
 - **LLM query-rewrite at runtime**: the agent's own host model paraphrases the query into a few Polish/English forms; we union the BM25 hits. The "intelligence" is the host model, costing tokens, not a bundled NLP stack.
 - **Escape hatch — flex the hybrid boundary**: if v1 recall on Confluence prose is poor, the *local scraper* (which has full network + deps) can optionally run real stanza lemmatization and emit pre-lemmatized fields in the export. Digest just consumes them. This moves the heavy NLP across the boundary **without changing the in-sandbox architecture** — a config flag, not a redesign.
 
-Embeddings remain deferred (per `01_INDEXING.md` D1): add a baked multilingual MiniLM rerank pass only if the eval set shows a recall gap.
+Embeddings remain deferred (per `INDEXING.md` D1): add a baked multilingual MiniLM rerank pass only if the eval set shows a recall gap.
 
 ---
 
@@ -411,10 +411,10 @@ This is the concrete answer to *"smoothly grow and keep the most important thing
 
 | Phase | Scope | Why first / risk |
 |------:|-------|------------------|
-| 0 | **Scope spec + eval set** (carried from `02_NEXT_STEPS.md`: 20 queries, sample Jira/Conf/Mule/SF) | Nothing is testable without it. |
-| 1 | **Librarian core** — ✅ **implemented** in [`../librarian/`](../librarian/): `schema.py`, `manifest.py`, `changelog.py`, `session.py`, `store.py`, `librarian.py`; invariants I1–I6, I8, I9, I11, I12, I13 + atomic ZIP swap; 32 pytest tests in [`../tests/`](../tests/) (`.venv/bin/pytest`). I7/I10 land with the index/digest builders. | The spine. Everything else commits through it. Built and tested in isolation — real importable modules, no shared-globals exec. |
+| 0 | **Scope spec + eval set** (20 queries, sample Jira/Conf/Mule/SF) | Nothing is testable without it. |
+| 1 | **Librarian core** — ✅ **implemented** in [`../librarian/`](../librarian/): `schema.py`, `manifest.py`, `changelog.py`, `session.py`, `store.py`, `librarian.py`; invariants I1–I6, I8, I9, I11, I12, I13 + atomic ZIP swap; 51 pytest tests in [`../tests/`](../tests/) (`.venv/bin/pytest`) span the full suite. I7/I10 land with the index/digest builders. | The spine. Everything else commits through it. Built and tested in isolation — real importable modules, no shared-globals exec. |
 | 2 | **Bootstrap + session loop** — ✅ **implemented**: [`librarian/bootstrap.py`](../librarian/bootstrap.py) (`boot()` + `Session` with auto-checkpoint), [`MASTER_PROMPT.md`](../MASTER_PROMPT.md) (the operating contract — pasted into the builder, *outside* the ZIP), [`scripts/build_memory.py`](../scripts/build_memory.py) deployable-ZIP builder. Verified by a clean-room boot: a 20 KB `memory.zip` imports the engine from *inside* itself and runs a commit cycle on an interpreter with no `librarian` installed. | Proves the ZIP-in/ZIP-out memory cycle end to end. |
-| 3 | **Digest: Salesforce** — ✅ **implemented** ([`librarian/digest/salesforce.py`](../librarian/digest/salesforce.py) + [`omnistudio.py`](../librarian/digest/omnistudio.py)): parses `force-app` → objects/fields, Apex, triggers, flows, LWC, **flexipages, permission sets, profiles, permission set groups** raw KUs + a typed graph (field_of, lookup, on, calls, references, touches, uses-component, page-for, embeds, grants, contains, maps, uses). Names handled standard/custom/**packaged**; referenced-but-not-retrieved objects become **external stub nodes** so object-centric queries stay complete. Queries: `fields_of`/`triggers_on`/`who_calls`/`calls_of`/`flows_touching`/`components_using`/`grants_on`/`pages_for` + generic `neighbors`/`dependencies`/`dependents`. **OmniStudio** (OmniScripts, Integration Procedures, Data Mappers, FlexCards; standard `*.os/oip/rpt/ouc-meta.xml`, plus Vlocity DataPacks) — ✅ **validated against real Designer-built components**: OmniScript→IP (`integrationProcedureKey`) and →Data Mapper (`bundle`) from nested `<omniProcessElements>/<propertySetConfig>`; IP→Data Mapper; Data Mapper→SObject from structured `<omniDataTransformItem>` (`inputObjectName`). Canonical naming `Type_SubType` (OS/IP) / `Name` (DM), active-version dedup. **Caveat:** managed/file-based industry components (e.g. an E&U solution) aren't exposed to the Metadata API — those need OmniStudio's DataPack/migration export (the Vlocity-DataPack path handles that JSON). | Structured sources first; exact-answer graph queries are the easy wins. |
+| 3 | **Digest: Salesforce** — ✅ **implemented** ([`librarian/digest/graphbuilder.py`](../librarian/digest/graphbuilder.py), backed by the vendored [`vendor/graphbuilder/`](../vendor/graphbuilder/) engine incl. [`omnistudio.py`](../vendor/graphbuilder/omnistudio.py)): parses `force-app` → objects/fields, Apex, triggers, flows, LWC, **flexipages, permission sets, profiles, permission set groups** raw KUs + a typed graph (field_of, lookup, on, calls, references, touches, uses-component, page-for, embeds, grants, contains, maps, uses). Names handled standard/custom/**packaged**; referenced-but-not-retrieved objects become **external stub nodes** so object-centric queries stay complete. Queries: `fields_of`/`triggers_on`/`who_calls`/`calls_of`/`flows_touching`/`components_using`/`grants_on`/`pages_for` + generic `neighbors`/`dependencies`/`dependents`. **OmniStudio** (OmniScripts, Integration Procedures, Data Mappers, FlexCards; standard `*.os/oip/rpt/ouc-meta.xml`, plus Vlocity DataPacks) — ✅ **validated against real Designer-built components**: OmniScript→IP (`integrationProcedureKey`) and →Data Mapper (`bundle`) from nested `<omniProcessElements>/<propertySetConfig>`; IP→Data Mapper; Data Mapper→SObject from structured `<omniDataTransformItem>` (`inputObjectName`). Canonical naming `Type_SubType` (OS/IP) / `Name` (DM), active-version dedup. **Caveat:** managed/file-based industry components (e.g. an E&U solution) aren't exposed to the Metadata API — those need OmniStudio's DataPack/migration export (the Vlocity-DataPack path handles that JSON). | Structured sources first; exact-answer graph queries are the easy wins. |
 | 3b | **Digest: Mule** — ✅ **implemented** ([`librarian/digest/mule.py`](../librarian/digest/mule.py)): one KU per Mule config file; flows/sub-flows/connectors as graph nodes; `<flow-ref>` → `calls` edges, connectors → `uses` edges; cross-file flow-refs become file→file links; flow names join the entity bridge. Queries: `flow`/`who_calls`/`calls_from`/`connectors_used`/`flows_using`/`search_flows`. Synthetic-tested; validate against a real Mule app when available. | Same graph approach as Salesforce. |
 | 4 | **Scraper + export contract + digest: Jira/Confluence** — recursive crawl from root (§8.1), read-only (§1.1), `normalize_pl.py` + `pl_lemmas.sqlite` | The hard retrieval source; the escape hatch (§7.4) de-risks it. |
 | 5 | **Retrieve / entity bridge** — ✅ **implemented** ([`librarian/index.py`](../librarian/index.py) + [`retrieve.py`](../librarian/retrieve.py)): a source-agnostic search index (a serialized SQLite KU `agent:index/search`) holding the **entity bridge** (`entities` table) + **FTS5** over title/entities/body, rebuilt idempotently via `rebuild_indexes()`. Primitives: `find_entity` (cross-source by name), `cross_source` (join grouped by source), `search` (BM25 + snippets), `entity_like`. Validated on the sample org (341 entity links, 199 FTS docs). LLM query-rewrite is the agent's job at runtime; embeddings still deferred. | The bread-and-butter ASK path. |
@@ -447,14 +447,13 @@ Phase 1 is the highest-leverage and the most different from the studied framewor
 
 ---
 
-## 13. How this reconciles with the existing `plan/`
+## 13. Status of this document
 
-- `01_INDEXING.md` — **still valid**, with the single change that its pipelines run in `digest/` (in-sandbox) rather than an external builder. The escape hatch in §7.4 is the only place heavy NLP may cross back to the local side.
-- `00_PLAN.md` §3 (two-codebase) — **superseded** by §1+§6 here: the "builder" shrinks to just the scraper; everything else is the agent's own digest.
-- `00_PLAN.md` §6 (anti-patterns) and `04_VERIFICATION.md` (rewrite shape) — **fully carried forward**; the Librarian (§3) is the concrete implementation of that rewrite shape's sections B (manifest), D (changelog), E (de-globals).
-- `02_NEXT_STEPS.md` — its A1–A5 deliverables are still the Phase 0 gate; D1 (embeddings) stays deferred; D2 (builder host) is resolved → laptop scraper only.
-
-I can fold these reconciliations back into `README.md` and `00_PLAN.md` once you've reviewed this doc.
+This is the **canonical, current architecture**. The detailed build plan, the
+outstanding-decisions list, and the analysis of the studied framework that
+informed these choices are kept as internal notes outside the tracked repo; where
+this document differs from any earlier framing, this document wins. The companion
+[`INDEXING.md`](INDEXING.md) covers the per-source indexing strategy in depth.
 
 ---
 
@@ -467,7 +466,7 @@ The whole point of the Librarian-as-spine design is that **growth happens at the
 It's **two changes, and nothing in the core moves:**
 
 1. Add the source to the `SOURCES` vocabulary in `schema.py` (one line). The id namespace (`newsrc:...`), tiers, manifest, changelog, persistence, and all 13 invariants then apply to it automatically.
-2. Write one `digest/<source>.py` that parses the input into KUs (+ an optional derived graph) and commits via `lib.begin(...).ingest_ku(...).commit()` — exactly the shape `digest/salesforce.py` already follows (`parse → to_kus → ingest`).
+2. Write one `digest/<source>.py` that parses the input into KUs (+ an optional derived graph) and commits via `lib.begin(...).ingest_ku(...).commit()` — exactly the shape `digest/mule.py` already follows (`parse → to_kus → ingest`).
 
 That's it. The Librarian, the atomic commit, the idempotent re-ingest, the staleness flagging, the ZIP cycle — all reused unchanged. This is the concrete payoff of *not* tangling source-specific logic into the engine (the mistake we documented in the studied framework, where Salesforce vocabulary leaked into every code path).
 
@@ -495,7 +494,7 @@ If skills proliferate, add a small **generated** skill registry + routing ("whic
 |----------|----------------|
 | Many sources × large corpora exceed one ZIP | Multi-ZIP shard fallback (designed in §12; manifest/bootstrap implement it when needed) |
 | A single source's graph gets very large as one JSON KU | Move that source's graph into a sqlite artifact in the `indexes` tier (same KU contract, different storage) |
-| Cross-source value depends entirely on the entity bridge | Build it well and early — it's the linchpin (TODO in `04_STATUS.md`) |
+| Cross-source value depends entirely on the entity bridge | Build it well and early — it's the linchpin (implemented in `librarian/index.py`) |
 | Two skills writing overlapping curated KUs | Already handled by the transaction model (atomic, validated), but adopt a naming convention for curated namespaces to avoid collisions |
 
 The headline: **adding a source is a vocab line + a digest module; adding a skill is a module that talks to the Librarian.** The spine — manifest, transactions, invariants, persistence — is fixed and reused, which is exactly what keeps the agent able to "smoothly grow" without drifting into a mess.

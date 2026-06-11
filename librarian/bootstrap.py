@@ -1,4 +1,4 @@
-"""Session entry — the one bootstrap (plan/03_ARCHITECTURE.md §5).
+"""Session entry — the one bootstrap (docs/ARCHITECTURE.md §5).
 
 At the start of a session the agent runs this against the retained
 ``memory.zip``. It unpacks the ZIP into a working dir, makes the in-ZIP

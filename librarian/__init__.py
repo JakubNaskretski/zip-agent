@@ -3,7 +3,7 @@
 The Librarian is the ONLY sanctioned path that mutates the memory ZIP's
 knowledge base or manifest. Every change is staged, validated against all
 invariants, and committed atomically — or rejected. See
-``plan/03_ARCHITECTURE.md`` §3 for the design and the invariant catalogue (I1–I13).
+``docs/ARCHITECTURE.md`` §3 for the design and the invariant catalogue (I1–I13).
 """
 
 from .schema import KnowledgeUnit, validate_ku, content_hash

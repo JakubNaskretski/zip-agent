@@ -1,7 +1,7 @@
 # Retrieving a Salesforce sample — locally, no token leaves your machine
 
 The agent never connects to Salesforce (it's network-isolated by design — see the
-read-only safety principle in `plan/03_ARCHITECTURE.md` §1.1). For testing the
+read-only safety principle in `ARCHITECTURE.md` §1.1). For testing the
 digest we need the **metadata source files** (`force-app/`), which you retrieve on
 your own machine with the Salesforce CLI. Auth stays local; you never copy a token.
 
