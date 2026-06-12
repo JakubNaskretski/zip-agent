@@ -205,8 +205,18 @@ og  = office.load_graph(lib)       # office docs structure graph (sections/sheet
 | What a design doc / spec / mapping workbook says about X | `retrieve.search(con, "X", source="docs", lib=lib)` → hits the `docs:<path>#text` sidecars; document structure (sections/sheets/tables, `columns` attrs) via `office.load_graph(lib)`; the original file via `lib.read_body("docs:<path>")` |
 | Impact of changing `N` (anything) | `find_entity(con, "N")` → for each hit, `sf.dependents(g, node_id)` |
 | Any node's in/out edges, by type | `sf.neighbors(g, node_id, "in"\|"out", edge_type)` |
+| Multi-hop neighborhood (2+ hops, bounded) | `sf.walk(g, "apexclass/Foo", depth=2)` — works on any loaded graph (g/mg/og); returns `{"nodes": [{id, type, label, depth}, …], "truncated": N}` |
+| Peek inside a KU body around a term | `retrieve.excerpt(lib, ku_id, "term")` → list of short context strings; triage BEFORE any full read |
 
 **Step 3 — expand only as needed.** Walk one or two graph hops; read a KU's body (`lib.read_body(ku_id)`) only when you actually need its content. Never pull bodies "just in case."
+
+**Deep-dive protocol** (follow this order before reading any body):
+1. Triage from what you already have: `walk()`/`neighbors()` output carries `type`+`label`; search snippets from `retrieve.search(..., lib=lib)`; manifest titles via `lib.get(ku_id)`.
+2. Shortlist at most 2–3 KUs that genuinely require body inspection.
+3. Call `retrieve.excerpt(lib, ku_id, "term")` first — it reads only a match-positioned window.  Call full `lib.read_body(ku_id)` only when the excerpt is not enough.
+4. One large body per execution at most; print only the slice you need, never a whole file.
+5. **NEVER loop `read_body` over graph results.**  **Never hand-roll graph traversal** — `walk()` is the multi-hop primitive and its depth/limit caps are there to keep the sandbox alive.
+6. Load each graph once per session (`g`/`mg`/`og` at the top of an ASK cell, then reuse). The stdout budget (§4 Long operations) applies to ASK answers too.
 
 **Step 4 — synthesize.** Answer in prose, **cite the KU ids** you used (they encode the source), and state a confidence tier (§5). Process in code; print the distilled answer, not raw KUs.
 
@@ -265,6 +275,9 @@ Data Center, Bearer PAT):
 BOOT      unzip (only if workdir lacks librarian/) → sys.path → boot() → session.librarian
           — ONCE per session; re-boot only after the user uploads a NEW memory.zip
 ASK       classify → entity bridge / graph / FTS → expand minimally → cite KU ids + confidence (§4.1)
+          multi-hop: sf.walk(g, node_id, depth=2) · body peek: retrieve.excerpt(lib, ku_id, "term")
+          deep-dive: triage first (walk/search snippets/lib.get) → excerpt → read_body only if needed
+          NEVER loop read_body over graph results · NEVER hand-roll BFS · one body per execution
 MANIFEST  lib.manifest.get(id) → one KU; .all() / .entries → every KU; .stats → counts by tier/source/kind
 DIGEST    sf.digest()/mule.parse_mule()/jira.parse_jira()/confluence.parse_confluence()/
           office.parse_office() preview → confirm → sf.ingest_salesforce()/mule.ingest_mule()/
