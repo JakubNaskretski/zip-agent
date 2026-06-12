@@ -23,11 +23,10 @@ report/flow translations are deliberately skipped — names, never content.
 """
 from __future__ import annotations
 
-import xml.etree.ElementTree as ET
-
 from pathlib import Path
 
 from ..core import node
+from ..xmlutil import parse_root
 
 
 def _local(tag: str) -> str:
@@ -85,7 +84,7 @@ class TranslationExtractor:
         if not obj or not loc:
             return [], []
         attr = _locale_attr(loc)
-        root = ET.parse(path).getroot()
+        root = parse_root(path)
         nodes: list[dict] = []
         # the object's own translated name: singular caseValues entry wins
         value = ""
@@ -110,7 +109,7 @@ class TranslationExtractor:
         obj, loc = _split_stem(path.parent.name)
         if not obj or not loc:
             return [], []
-        root = ET.parse(path).getroot()
+        root = parse_root(path)
         name = _child_text(root, "name") \
             or path.name[:-len(".fieldTranslation-meta.xml")]
         label = _child_text(root, "label")
@@ -126,7 +125,7 @@ class TranslationExtractor:
         if not loc:
             return [], []
         attr = _locale_attr(loc)
-        root = ET.parse(path).getroot()
+        root = parse_root(path)
         nodes: list[dict] = []
         for tag, kind in (("customLabels", "label"), ("quickActions", "quickaction")):
             for el in _iter_local(root, tag):

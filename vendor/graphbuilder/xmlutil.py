@@ -47,3 +47,15 @@ def child_text(parent, tag: str) -> str:
     ``tag`` (namespace-agnostic), or ``""`` if absent/empty."""
     c = child(parent, tag)
     return (c.text or "").strip() if c is not None else ""
+
+
+def parse_root(path):
+    """Parse a metadata file and return its root element — tolerant of the junk
+    real exports carry BEFORE the XML declaration (a UTF-8 BOM, stray
+    whitespace/newlines), which makes ``ET.parse`` fail with "XML or text
+    declaration not at start of entity". Genuinely malformed XML still raises
+    ``ET.ParseError`` so the build records it in ``errors`` instead of hiding it."""
+    import xml.etree.ElementTree as ET
+
+    data = path.read_bytes()
+    return ET.fromstring(data.lstrip(b"\xef\xbb\xbf\xff\xfe\r\n\t "))
