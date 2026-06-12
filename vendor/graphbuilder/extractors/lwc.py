@@ -37,6 +37,15 @@ _WIRE_ADAPTER = re.compile(r"@wire\s*\(\s*(\w+)")
 # custom child element in a template: <c-some-cmp ...> (kebab-case, c- namespace).
 _CUSTOM_ELEMENT = re.compile(r"<c-([a-z0-9]+(?:-[a-z0-9]+)*)\b")
 
+# A managed-package child element: <ns-comp-name ...> where `ns` is the package
+# namespace (may contain underscores, e.g. acme_pkg). Platform namespaces are
+# skipped; the local `c` namespace is handled by _CUSTOM_ELEMENT above.
+_NAMESPACED_ELEMENT = re.compile(r"<([a-z][a-z0-9_]*)-([a-z0-9_]+(?:-[a-z0-9_]+)*)\b")
+_BUILTIN_TAG_NS = frozenset({
+    "c", "lightning", "lwc", "aura", "ui", "force", "forcechatter",
+    "forcecommunity", "ltng", "laf", "lightningsnapin", "site", "clients",
+})
+
 
 def _kebab_to_camel(tag: str) -> str:
     """`acme-reading-card` -> `acmeReadingCard` (the LWC bundle/folder name)."""
@@ -144,6 +153,15 @@ class LwcExtractor:
                 name = _kebab_to_camel(tag)
                 if name and name != self_name:
                     found.add(name)
+            # Managed-package children keep their namespace:
+            # <acme_pkg-card-frame> -> acme_pkg__cardFrame (matching how flows
+            # reference namespaced LWC).
+            for ns, tag in _NAMESPACED_ELEMENT.findall(html):
+                if ns in _BUILTIN_TAG_NS:
+                    continue
+                name = _kebab_to_camel(tag)
+                if name:
+                    found.add(f"{ns}__{name}")
         return found
 
 

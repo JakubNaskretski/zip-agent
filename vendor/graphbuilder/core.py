@@ -94,13 +94,23 @@ class GraphBuilder:
         Identical contract to :meth:`build`, but you choose the files — used to
         digest a single file (or any subset) without scanning a whole tree. Files
         no extractor handles are skipped; order doesn't affect the result.
-        """
-        # Pass 1: extract. `registry` maps node id -> node dict; the first node
-        # seen for an id wins (setdefault), so duplicate emissions are harmless.
-        registry: dict[str, dict] = {}
-        pending_edges: list[dict] = []
-        errors: list[dict] = []
 
+        The two passes are also public on their own — :meth:`extract_files` /
+        :meth:`resolve_extracted` — for callers that need the per-file extraction
+        results (e.g. a digest building one record per source file) without
+        paying for a second extraction pass.
+        """
+        extracted, errors = self.extract_files(paths)
+        return self.resolve_extracted(extracted, errors)
+
+    def extract_files(self, paths) -> tuple:
+        """Pass 1 only: offer each file to the extractors and keep the raw
+        results per file. Returns ``(extracted, errors)`` where ``extracted`` is
+        ``[(Path, nodes, raw_edges), …]`` for every handled file (in input
+        order) and ``errors`` is the build-level error list. Nothing raises: an
+        unhandled file is skipped, a throwing extractor becomes an error entry."""
+        extracted: list[tuple] = []
+        errors: list[dict] = []
         for path in paths:
             path = Path(path)
             extractor = next(
@@ -118,11 +128,21 @@ class GraphBuilder:
                     "error": f"{type(exc).__name__}: {exc}",
                 })
                 continue
-            for n in nodes or []:
-                registry.setdefault(n["id"], n)
-            pending_edges.extend(edges or [])
+            extracted.append((path, nodes or [], edges or []))
+        return extracted, errors
 
-        # Pass 2: resolve each raw edge's logical target into a concrete node id.
+    def resolve_extracted(self, extracted, errors=None) -> dict:
+        """Pass 2: registry + resolution over :meth:`extract_files` output.
+        Returns the usual ``{"nodes", "edges", "unresolved", "errors"}``."""
+        # `registry` maps node id -> node dict; the first node seen for an id
+        # wins (setdefault), so duplicate emissions are harmless.
+        registry: dict[str, dict] = {}
+        pending_edges: list[dict] = []
+        for _, nodes, edges in extracted:
+            for n in nodes:
+                registry.setdefault(n["id"], n)
+            pending_edges.extend(edges)
+
         resolved_edges: list[dict] = []
         unresolved: list[dict] = []
         for edge in pending_edges:
@@ -145,7 +165,7 @@ class GraphBuilder:
             "nodes": list(registry.values()),
             "edges": resolved_edges,
             "unresolved": unresolved,
-            "errors": errors,
+            "errors": list(errors or []),
         }
 
 

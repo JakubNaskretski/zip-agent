@@ -15,9 +15,9 @@ its always-on regex backend).
 | | |
 |---|---|
 | Source | `graph-builder` (private sibling repo) |
-| Pinned commit | `4a59b97b357f3f8d96bf310cd12e2d8d7e9cc0c5` |
-| Pinned tip | "Merge branch 'feat/mule-taxonomy'" — `main` merge commit (Phase-3 Mule taxonomy) |
-| Vendored on | 2026-06-11 |
+| Pinned commit | `5e069f11a2e7e1f222fdff855ffe5d7a5ffb0935` |
+| Pinned tip | `main` (Phase-3 Mule taxonomy + managed-package component refs + two-phase build API) |
+| Vendored on | 2026-06-12 |
 | Scope | the `graphbuilder/` package only — no tests, no scripts |
 | Coverage | 26 Salesforce extractors (objects/fields, Apex+methods, triggers, flows+elements, LWC, Aura, Visualforce, flexipages, layouts, perm sets/profiles/groups, sharing rules, approval processes, reports, rules, OmniStudio, labels, …) + the Mule extractors (`graphbuilder/mulesoft` + `extractors/{mule,raml,muleprops,mulebuild}`: flow/flow-ref/connector graph, APIkit surface incl. RAML specs/resources, source triggers, global configs, property files/keys, pom + descriptor build metadata). Confluence + Jira subpackages are included for the planned Phase-4 collectors. |
 

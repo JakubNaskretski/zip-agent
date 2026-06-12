@@ -246,6 +246,14 @@ def _iter_text(root, tag):
     return [el.text for el in _iter_local(root, tag) if el.text]
 
 
+# Platform component namespaces on flexipages — never custom/managed components.
+_FLEXIPAGE_BUILTIN_NS = frozenset({
+    "flexipage", "force", "forcecommunity", "forceknowledge", "lightning",
+    "lightningcommunity", "lightningsnapin", "native", "interop", "aura", "ui",
+    "siteforce", "sfa", "wave", "cms",
+})
+
+
 def parse_flexipage(path: Path) -> SFFlexiPage:
     name = path.name.replace(".flexipage-meta.xml", "")
     raw = path.read_text("utf-8", errors="replace")
@@ -256,8 +264,19 @@ def parse_flexipage(path: Path) -> SFFlexiPage:
         return fp
     fp.sobject = _text(root, "sobjectType")
     fp.components = _iter_text(root, "componentName")
-    # custom LWC/Aura are referenced as "c:componentName"
-    fp.lwc_refs = {c.split(":", 1)[1] for c in fp.components if c.startswith("c:")}
+    # custom LWC/Aura are referenced as "c:componentName"; managed-package
+    # components as "ns:componentName" -> keep the namespace as ns__componentName.
+    refs = set()
+    for c in fp.components:
+        ns, sep, comp = c.partition(":")
+        if not sep or not ns or not comp:
+            continue
+        ns = ns.lower()
+        if ns == "c":
+            refs.add(comp)
+        elif ns not in _FLEXIPAGE_BUILTIN_NS and not ns.startswith("runtime_"):
+            refs.add(f"{ns}__{comp}")
+    fp.lwc_refs = refs
     return fp
 
 

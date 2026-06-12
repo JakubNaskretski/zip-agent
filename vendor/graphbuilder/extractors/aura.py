@@ -31,6 +31,18 @@ _CUSTOM_TAG = re.compile(r"<c:([A-Za-z_]\w*)\b")
 # double quotes); the markup-namespaced name is captured.
 _CREATE_COMPONENT = re.compile(r"""createComponent\s*\(\s*['"]c:([A-Za-z_]\w*)['"]""")
 
+# Managed-package component refs: `<ns:Comp>` in markup and
+# `$A.createComponent("ns:Comp", ...)` in JS. Platform namespaces are skipped;
+# the local `c` namespace is handled by the two patterns above.
+_NS_TAG = re.compile(r"<([A-Za-z]\w*):([A-Za-z_]\w*)\b")
+_NS_CREATE_COMPONENT = re.compile(
+    r"""createComponent\s*\(\s*['"]([A-Za-z_]\w*):([A-Za-z_]\w*)['"]"""
+)
+_BUILTIN_AURA_NS = frozenset({
+    "c", "aura", "ui", "lightning", "force", "forcechatter", "forcecommunity",
+    "ltng", "design", "apex", "flexipage", "wave", "lightningsnapin",
+})
+
 # `controller="ClassName"` — the Apex server-side controller of the bundle. May be
 # namespaced (`MyNs.Handler`); the class is the head's last segment.
 _CONTROLLER_ATTR = re.compile(r"""\bcontroller\s*=\s*['"]([\w.]+)['"]""")
@@ -102,6 +114,14 @@ class AuraExtractor:
         for child in _CREATE_COMPONENT.findall(js_src):
             if child and child != name:
                 children.add(child)
+        # Managed-package children keep their namespace:
+        # <acme_pkg:CardFrame> -> acme_pkg__CardFrame.
+        for ns, child in _NS_TAG.findall(markup):
+            if child and ns.lower() not in _BUILTIN_AURA_NS:
+                children.add(f"{ns}__{child}")
+        for ns, child in _NS_CREATE_COMPONENT.findall(js_src):
+            if child and ns.lower() not in _BUILTIN_AURA_NS:
+                children.add(f"{ns}__{child}")
         for child in sorted(children):
             edges.append(raw_edge(aid, "uses-component", "aura", child))
 

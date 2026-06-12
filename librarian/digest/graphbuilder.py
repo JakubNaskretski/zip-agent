@@ -10,8 +10,8 @@ OmniStudio, labels, …) — a strict superset of the old digest's coverage.
 Vendoring pin (the graph-builder commit this engine was copied from — see
 ``vendor/README.md``):
 
-    4a59b97b357f3f8d96bf310cd12e2d8d7e9cc0c5   (2026-06-11, "Merge branch
-    'feat/mule-taxonomy'" — main; Phase-3 Mule taxonomy)
+    5e069f11a2e7e1f222fdff855ffe5d7a5ffb0935   (2026-06-12, main: Phase-3 Mule
+    taxonomy + managed-package component refs + two-phase build API)
 
 What the adapter does (the §14.1 ``parse → to_kus → ingest`` contract):
 
@@ -60,11 +60,13 @@ except ImportError:  # pragma: no cover - dev-repo path
 
 from graphbuilder import build_graph as _gb_build_graph
 from graphbuilder import persistence as _gb_persistence
+from graphbuilder.core import GraphBuilder as _GraphBuilder
 from graphbuilder.extractors import all_extractors as _gb_all_extractors
+from graphbuilder.resolvers import default_resolvers as _gb_default_resolvers
 
 # pin recorded in the built-in tool KU (and echoed in this module's docstring)
-_VENDORED_SHA = "4a59b97b357f3f8d96bf310cd12e2d8d7e9cc0c5"
-_VENDORED_AT = "2026-06-11"
+_VENDORED_SHA = "5e069f11a2e7e1f222fdff855ffe5d7a5ffb0935"
+_VENDORED_AT = "2026-06-12"
 
 GRAPH_ID = "salesforce:graph/sf"
 GRAPH_PATH = "kb/structured/salesforce/graph.json"
@@ -134,13 +136,6 @@ def _sf_extractors():
     """The Salesforce extractors only (Confluence/Jira extractors never match a
     force-app file, but filtering keeps the raw-KU pass strictly SF-sourced)."""
     return [e for e in _gb_all_extractors() if getattr(e, "source", None) == "salesforce"]
-
-
-def _safe(fn, default):
-    try:
-        return fn()
-    except Exception:
-        return default
 
 
 def build_graph(force_app_dir) -> dict:
@@ -235,27 +230,6 @@ def _file_to_ku(path: Path, nodes, raw_edges, root: Path):
     return ku, body
 
 
-def _raw_kus(root: Path):
-    """Yield (KU, body) per handled source file, plus a list of skipped files."""
-    extractors = _sf_extractors()
-    skipped: list = []
-    kus: list = []
-    paths = sorted(p for p in root.rglob("*") if p.is_file())
-    for path in paths:
-        ext = next((e for e in extractors if _safe(lambda: e.handles(path), False)), None)
-        if ext is None:
-            continue
-        try:
-            nodes, raw_edges = ext.extract(path)
-        except Exception as exc:
-            skipped.append(f"{path.name}: {type(exc).__name__}: {exc}")
-            continue
-        if not nodes:
-            continue
-        kus.append(_file_to_ku(path, nodes, raw_edges, root))
-    return kus, skipped
-
-
 def _graph_ku(graph):
     body = _gb_persistence.to_json(graph)   # deterministic; carries version + the 4 keys
     ku = KnowledgeUnit(
@@ -267,11 +241,25 @@ def _graph_ku(graph):
 
 
 def digest(force_app_dir) -> Digest:
-    """Parse a force-app tree into a :class:`Digest` (pure; no Librarian)."""
+    """Parse a force-app tree into a :class:`Digest` (pure; no Librarian).
+
+    Single extraction pass: the engine's two-phase API extracts every file once,
+    the per-file results become the raw KUs, and the SAME results are resolved
+    into the graph — previously the tree was extracted twice (once inside
+    ``build_graph``, once for the KUs), doubling parse cost on large orgs. The
+    graph is built from the Salesforce extractors only (a force-app never
+    matches the Confluence/Jira/Mule extractors, so the output is identical)."""
     root = Path(force_app_dir)
-    graph = build_graph(root)
-    kus, skipped = _raw_kus(root)
+    builder = (_GraphBuilder().register(*_sf_extractors())
+               .register_resolver(*_gb_default_resolvers()))
+    paths = sorted(p for p in root.rglob("*") if p.is_file())
+    extracted, errors = builder.extract_files(paths)
+    kus = [_file_to_ku(path, nodes, raw_edges, root)
+           for path, nodes, raw_edges in extracted if nodes]
+    graph = builder.resolve_extracted(extracted, errors)
     kus.append(_graph_ku(graph))
+    # extraction failures live in graph["errors"]; mirror the old skipped strings
+    skipped = [f"{e['path']}: {e['error']}" for e in graph["errors"]]
     return Digest(graph=graph, kus=kus, skipped=skipped)
 
 
