@@ -8,11 +8,16 @@ skipped).
 The §14.1 ``parse → to_kus → ingest`` contract, same as jira/mule/graphbuilder,
 with one docs-specific twist — THREE artifacts per document:
 
-  * one **raw KU per file** (``docs:<relpath>``) whose body is the ORIGINAL
-    FILE BYTES, verbatim. The Librarian's body pipeline is bytes-native
-    (``content_hash`` / ``Store.write`` / ``lib.read_body`` all take and return
-    ``bytes`` untouched), so the agent can re-open — and re-parse — the exact
-    uploaded file on demand; no base64, no lossy decode.
+  * one **raw KU per file** (``docs:<relpath>``) whose body is a **media-stripped
+    working copy** of the uploaded file: images and embedded media are removed
+    from OOXML zips (every XML part — slides, notes, section text, tables,
+    chart XML including cached numeric values — is kept byte-identical, so the
+    agent can re-open and re-parse text, tables and chart data on demand from
+    the raw KU). PDF files (not an OOXML zip) are stored verbatim. The user
+    keeps their own original; the stored copy is the agent's working copy and
+    may not reopen cleanly in PowerPoint/Word due to dangling image references.
+    The Librarian's body pipeline is bytes-native (``content_hash`` /
+    ``Store.write`` / ``lib.read_body`` all take and return ``bytes`` untouched).
   * one **plain-text sidecar KU** (``docs:<relpath>#text``, stored next to the
     file as ``<relpath>.txt``) holding the extracted plaintext: section titles +
     section body text for Word; sheet/table names + column names for Excel;
@@ -42,6 +47,8 @@ Containment rules (owner decisions, 2026-06-12 — the prose rule, hardened):
 """
 from __future__ import annotations
 
+import io
+import zipfile
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -49,6 +56,80 @@ from ..schema import KnowledgeUnit
 from ._progress import done as _done
 from ._progress import extract_in_chunks as _extract_in_chunks
 from ._progress import tick as _tick
+
+# --------------------------------------------------------------------------- #
+# media stripping
+# --------------------------------------------------------------------------- #
+_DROPPABLE_DIRS = {"media", "embeddings"}
+_DROPPABLE_FILE = "docProps/thumbnail."   # any extension
+
+
+def _strip_media(data: bytes) -> bytes:
+    """Return a media-stripped copy of an OOXML zip, or the original bytes
+    unchanged for non-OOXML input (e.g. PDF — non-PK magic passthrough).
+
+    Dropped entries: any zip member whose path contains a ``media/`` or
+    ``embeddings/`` directory segment (covers ``ppt/media``, ``word/media``,
+    ``xl/media``, ``ppt/embeddings``, ``xl/embeddings``) and
+    ``docProps/thumbnail.*``.  ALL other entries — every XML part, ``.rels``
+    files, ``[Content_Types].xml`` — are kept with byte-identical content.
+
+    If NOTHING is droppable the ORIGINAL ``bytes`` object is returned unchanged
+    so media-free documents keep their exact original bytes and existing content
+    hashes (I9: re-ingesting the same file stays a no-op).
+
+    Otherwise the zip is rewritten DETERMINISTICALLY: entries in original order,
+    fixed ``ZipInfo.date_time`` ``(1980, 1, 1, 0, 0, 0)``, no extra fields or
+    comments, ``ZIP_DEFLATED`` compression.  The same input always produces
+    identical output bytes (I9: re-ingesting the same deck hashes identically
+    and no-ops).
+
+    Storage policy: the stored copy is the AGENT'S working copy — all XML is
+    retained (slides/notes/tables/chart XML including cached numeric values stay
+    re-parseable from the raw KU), but image references dangle so it is not
+    guaranteed to reopen cleanly in PowerPoint/Word; the user keeps their own
+    original.
+    """
+    # Non-OOXML (PDF or unknown): PK magic check — passthrough verbatim.
+    if data[:4] != b"PK\x03\x04":
+        return data
+
+    try:
+        src = zipfile.ZipFile(io.BytesIO(data), "r")
+    except zipfile.BadZipFile:
+        # Malformed zip — return as-is; the engine will surface the error.
+        return data
+
+    def _droppable(name: str) -> bool:
+        parts = name.replace("\\", "/").split("/")
+        # Any segment is a media/embeddings directory
+        for seg in parts[:-1]:
+            if seg in _DROPPABLE_DIRS:
+                return True
+        # docProps/thumbnail.<ext>
+        if name.startswith(_DROPPABLE_FILE):
+            return True
+        return False
+
+    members = src.infolist()
+    drops = [m for m in members if _droppable(m.filename)]
+    if not drops:
+        src.close()
+        return data   # no media — return the original object unchanged
+
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", compression=zipfile.ZIP_DEFLATED) as dst:
+        for info in members:
+            if _droppable(info.filename):
+                continue
+            zi = zipfile.ZipInfo(info.filename, date_time=(1980, 1, 1, 0, 0, 0))
+            zi.compress_type = zipfile.ZIP_DEFLATED
+            zi.comment = b""
+            zi.extra = b""
+            dst.writestr(zi, src.read(info.filename))
+    src.close()
+    return buf.getvalue()
+
 
 # --------------------------------------------------------------------------- #
 # vendored engine import — works both in the dev repo (package under vendor/)
@@ -79,15 +160,15 @@ GRAPH_PATH = "kb/structured/docs/graph.json"
 @dataclass
 class OfficeDoc:
     """One parsed document — the envelope fields the KUs need, plus the
-    original bytes (``data``, the raw-KU body) and the extracted plaintext
-    (``text``, the sidecar body)."""
+    media-stripped working copy bytes (``data``, the raw-KU body) and the
+    extracted plaintext (``text``, the sidecar body)."""
     rel: str                    # path relative to the upload dir (the KU id segment)
     name: str                   # filename (the KU title — identity, not prose)
     file_id: str = ""           # sha1-12 of the file bytes (= docfile/<id> in the graph)
     doc_type: str = ""          # docx | xlsx (the format family; xlsm reports xlsx)
     structure: str = ""         # declared | heuristic | none (the engine's tier)
     text: str = ""              # extracted plaintext ("" -> no sidecar KU)
-    data: bytes = b""           # ORIGINAL file bytes, verbatim
+    data: bytes = b""           # media-stripped working copy (OOXML) or verbatim (PDF)
 
 
 @dataclass
@@ -172,7 +253,7 @@ def _plaintext(nodes) -> str:
     return "\n".join(line for line in lines if line).strip()
 
 
-def parse_office(docs_dir, progress=None) -> OfficeDigest:
+def parse_office(docs_dir, progress=None, *, strip_media=True) -> OfficeDigest:
     """Parse a directory of office documents into an :class:`OfficeDigest`
     (pure; no Librarian).
 
@@ -185,7 +266,11 @@ def parse_office(docs_dir, progress=None) -> OfficeDigest:
 
     ``progress`` (callable, e.g. ``print``): one-line count every ``EVERY``
     files (default 1000) — the extraction loop dominates a big-upload digest
-    (MASTER_PROMPT §4)."""
+    (MASTER_PROMPT §4).
+
+    ``strip_media`` (keyword-only, default ``True``): remove embedded images and
+    media from OOXML zips before storing as the raw KU body.  Set to ``False``
+    to retain the original bytes verbatim (e.g. for offline diff/audit)."""
     root = Path(docs_dir)
     builder = (_GraphBuilder().register(*_office_extractors())
                .register_resolver(*_gb_default_resolvers()))
@@ -202,13 +287,15 @@ def parse_office(docs_dir, progress=None) -> OfficeDigest:
             rel = path.relative_to(root).as_posix()
         except ValueError:                             # pragma: no cover
             rel = path.name
+        raw = path.read_bytes()
+        body = _strip_media(raw) if strip_media else raw
         documents.append(OfficeDoc(
             rel=rel, name=path.name,
             file_id=n["id"].split("/", 1)[-1],
             doc_type=n.get("doc_type", ""),
             structure=n.get("structure", ""),
             text=_plaintext(nodes),
-            data=path.read_bytes(),
+            data=body,
         ))
 
     graph = builder.resolve_extracted(extracted, errors)
@@ -219,10 +306,12 @@ def parse_office(docs_dir, progress=None) -> OfficeDigest:
 
 
 def to_kus(d: OfficeDigest):
-    """Per document: the raw KU (original bytes) + the plain-text sidecar
-    (skipped when there is no text), then the structured graph KU with all
-    inline section text redacted. ``entities`` are ALWAYS empty — the prose
-    rule; documents are found via FTS over the sidecars, never the bridge."""
+    """Per document: the raw KU (media-stripped working copy for OOXML, or
+    verbatim bytes for PDF — decided at parse time by ``parse_office``'s
+    ``strip_media``) + the plain-text sidecar (skipped when there is no text),
+    then the structured graph KU with all inline section text redacted.
+    ``entities`` are ALWAYS empty — the prose rule; documents are found via FTS
+    over the sidecars, never the bridge."""
     for rec in d.documents:
         raw_id = f"docs:{rec.rel}"
         prov = {
@@ -257,18 +346,24 @@ def to_kus(d: OfficeDigest):
     ), _gb_persistence.to_json(d.graph, redact_text=True)
 
 
-def ingest_office(lib, docs_dir, author, rationale, progress=None, *, dg=None):
+def ingest_office(lib, docs_dir, author, rationale, progress=None, *,
+                  dg=None, strip_media=True):
     """Parse a directory of office documents and commit it through the
     Librarian. Returns ``(Report, OfficeDigest)``. Re-ingesting unchanged
-    documents is a no-op (I9 — the file bytes' content hash drives it).
+    documents is a no-op (I9 — the stored body's content hash drives it).
     ``progress=print`` narrates every ``EVERY`` files/KUs (MASTER_PROMPT §4).
 
     ``dg`` (keyword-only): pass a pre-parsed :class:`OfficeDigest` from a
     preceding ``parse_office()`` call to skip the re-parse. ``docs_dir`` is
     still required by the signature but is unused for parsing when ``dg``
-    is given."""
+    is given.
+
+    ``strip_media`` (keyword-only, default ``True``): remove embedded images and
+    media from OOXML zips before storing the raw KU body.  Pass ``False`` to
+    retain original bytes (ignored when ``dg`` is supplied — stripping is
+    applied at parse time)."""
     if dg is None:
-        dg = parse_office(docs_dir, progress=progress)
+        dg = parse_office(docs_dir, progress=progress, strip_media=strip_media)
     txn = lib.begin(author, rationale)
     staged = 0
     for staged, (ku, body) in enumerate(to_kus(dg), 1):
