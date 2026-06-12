@@ -31,6 +31,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from ..schema import KnowledgeUnit
+from ._progress import extract_in_chunks as _extract_in_chunks
+from ._progress import tick as _tick
 
 # --------------------------------------------------------------------------- #
 # vendored engine import — works both in the dev repo (package under vendor/)
@@ -101,18 +103,21 @@ def _jira_extractors():
     return [e for e in _gb_all_extractors() if getattr(e, "source", None) == "jira"]
 
 
-def parse_jira(dump_dir) -> JiraDigest:
+def parse_jira(dump_dir, progress=None) -> JiraDigest:
     """Parse a Jira collector dump into a :class:`JiraDigest` (pure; no Librarian).
 
     Single extraction pass via the engine's two-phase API: each ``*.issue.json``
     is extracted once; the per-file issue nodes feed the raw-KU records and the
     SAME results are resolved into the contained intra-Jira graph. A file the
-    extractor raises on lands in ``errors``/``skipped`` — surfaced, not dropped."""
+    extractor raises on lands in ``errors``/``skipped`` — surfaced, not dropped.
+
+    ``progress`` (callable, e.g. ``print``): one-line count every 200 files —
+    the extraction loop dominates a big-dump digest (MASTER_PROMPT §4)."""
     root = Path(dump_dir)
     builder = (_GraphBuilder().register(*_jira_extractors())
                .register_resolver(*_gb_default_resolvers()))
     paths = sorted(p for p in root.rglob("*") if p.is_file())
-    extracted, errors = builder.extract_files(paths, root=root)
+    extracted, errors = _extract_in_chunks(builder, paths, root, progress, "jira parse")
 
     issues: list = []
     for path, nodes, _raw_edges in extracted:
@@ -165,13 +170,15 @@ def to_kus(d: JiraDigest):
     ), _gb_persistence.to_json(d.graph, redact_text=True)
 
 
-def ingest_jira(lib, dump_dir, author, rationale):
+def ingest_jira(lib, dump_dir, author, rationale, progress=None):
     """Parse a Jira collector dump and commit it through the Librarian. Returns
-    ``(Report, JiraDigest)``. Re-ingesting unchanged dumps is a no-op (I9)."""
-    d = parse_jira(dump_dir)
+    ``(Report, JiraDigest)``. Re-ingesting unchanged dumps is a no-op (I9).
+    ``progress=print`` narrates every 200 files/KUs (MASTER_PROMPT §4)."""
+    d = parse_jira(dump_dir, progress=progress)
     txn = lib.begin(author, rationale)
-    for ku, body in to_kus(d):
+    for staged, (ku, body) in enumerate(to_kus(d), 1):
         txn.ingest_ku(ku, body=body)
+        _tick(progress, "jira ingest", staged)
     return txn.commit(), d
 
 

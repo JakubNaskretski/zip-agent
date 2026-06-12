@@ -41,6 +41,8 @@ import json
 from pathlib import Path
 
 from ..schema import KnowledgeUnit
+from ._progress import extract_in_chunks as _extract_in_chunks
+from ._progress import tick as _tick
 
 # --------------------------------------------------------------------------- #
 # vendored engine import — works both in the dev repo (package under vendor/)
@@ -238,7 +240,7 @@ def _graph_ku(graph):
     return ku, body
 
 
-def digest(force_app_dir) -> Digest:
+def digest(force_app_dir, progress=None) -> Digest:
     """Parse a force-app tree into a :class:`Digest` (pure; no Librarian).
 
     Single extraction pass: the engine's two-phase API extracts every file once,
@@ -246,12 +248,15 @@ def digest(force_app_dir) -> Digest:
     into the graph — previously the tree was extracted twice (once inside
     ``build_graph``, once for the KUs), doubling parse cost on large orgs. The
     graph is built from the Salesforce extractors only (a force-app never
-    matches the Confluence/Jira/Mule extractors, so the output is identical)."""
+    matches the Confluence/Jira/Mule extractors, so the output is identical).
+
+    ``progress`` (callable, e.g. ``print``): one-line count every 200 files —
+    the extraction loop dominates a big-org digest (MASTER_PROMPT §4)."""
     root = Path(force_app_dir)
     builder = (_GraphBuilder().register(*_sf_extractors())
                .register_resolver(*_gb_default_resolvers()))
     paths = sorted(p for p in root.rglob("*") if p.is_file())
-    extracted, errors = builder.extract_files(paths, root=root)
+    extracted, errors = _extract_in_chunks(builder, paths, root, progress, "sf digest")
     # translation files emit only partial attribute-donor nodes (label_<locale>);
     # they enrich the graph but must not mint KUs — their primary node id would
     # collide with the real object/field KU minted from the defining file
@@ -302,17 +307,19 @@ def _tool_ku():
 # --------------------------------------------------------------------------- #
 # ingest
 # --------------------------------------------------------------------------- #
-def ingest_salesforce(lib, force_app_dir, author, rationale):
+def ingest_salesforce(lib, force_app_dir, author, rationale, progress=None):
     """Parse a force-app tree and commit it through the Librarian. Returns
     ``(Report, Digest)``. Re-ingesting unchanged content is a no-op (I9); the
-    built-in engine KU is registered once (idempotent)."""
-    dg = digest(force_app_dir)
+    built-in engine KU is registered once (idempotent). ``progress=print``
+    narrates every 200 files/KUs (MASTER_PROMPT §4 long-operations rules)."""
+    dg = digest(force_app_dir, progress=progress)
     txn = lib.begin(author, rationale)
     if lib.get(TOOL_ID) is None:
         tool_ku, tool_body = _tool_ku()
         txn.add_ku(tool_ku, body=tool_body)
-    for ku, body in dg.kus:
+    for staged, (ku, body) in enumerate(dg.kus, 1):
         txn.ingest_ku(ku, body=body)
+        _tick(progress, "sf ingest", staged)
     return txn.commit(), dg
 
 

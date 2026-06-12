@@ -95,12 +95,14 @@ What the Librarian guarantees (so you don't have to police it yourself): one man
   confluence.parse_confluence(dump_dir).summary()  # Confluence dump preview (pages/spaces/…)
   office.parse_office(docs_dir).summary()  # office docs preview (documents/doc_types/nodes/…)
   # on the user's go-ahead (each parses fresh and commits through the Librarian):
-  rep, dg = sf.ingest_salesforce(lib, force_app_dir, author, rationale)
+  rep, dg = sf.ingest_salesforce(lib, force_app_dir, author, rationale, progress=print)
   rep, md = mule.ingest_mule(lib, app_dir, author, rationale)
-  rep, jd = jira.ingest_jira(lib, dump_dir, author, rationale)
-  rep, cd = confluence.ingest_confluence(lib, dump_dir, author, rationale)
-  rep, od = office.ingest_office(lib, docs_dir, author, rationale)
+  rep, jd = jira.ingest_jira(lib, dump_dir, author, rationale, progress=print)
+  rep, cd = confluence.ingest_confluence(lib, dump_dir, author, rationale, progress=print)
+  rep, od = office.ingest_office(lib, docs_dir, author, rationale, progress=print)
   ```
+
+  Pass `progress=print` on any big digest (it prints a one-line count every 200 files/KUs, so a killed call shows where it stopped — see "Long operations" below); the Mule corpus is small enough not to need it.
 
   Re-ingesting unchanged content is a no-op (the report shows new/changed/unchanged). Absence in a scoped re-ingest is **not** deletion — flag it, never auto-retire. Surface `unresolved`/`errors`/`skipped` from the digest, never swallow them. **After a digest, run `rebuild_indexes(lib, author, "rebuild indexes after <source> digest")`** (`from librarian import rebuild_indexes`) so search reflects the new data. Jira/Confluence raw KUs hold each issue/page dump verbatim (`lib.read_body("jira:<PROJ>/<KEY>")` is the full detail); their `entities` carry structured ids only (issue key / space key + page id) — never extract prose names into the bridge. Office documents get THREE artifacts each: the raw KU `docs:<path>` holding the ORIGINAL file bytes (`lib.read_body` returns them verbatim — re-open/re-parse on demand), a plain-text sidecar `docs:<path>#text` that FTS indexes (section titles + text, sheet/table/column names), and the contained `docs:graph/docs` structure graph; their `entities` are ALWAYS empty — filenames, titles, headings and column names never enter the bridge.
 - **GROW** — author a curated KU (glossary term, cross-source mapping, decision, lesson) when you've confirmed something worth keeping. Always link it `derived-from` the raw KUs it rests on; if those later change, the Librarian flags your note `needs-review`. The shape that validates:
@@ -120,6 +122,16 @@ What the Librarian guarantees (so you don't have to police it yourself): one man
 - **REORG** — restructure the curated tier; preview → confirm → commit.
 
 Proactively surface curated KUs flagged `review_needed` — they were built on sources that have since changed.
+
+### Long operations — sandbox survival rules
+
+Your sandbox kills any single execution that runs too long, and the kernel dies **silently** mid-call; long stdout gets truncated. Work accordingly:
+
+- **Keep every execution under ~30 s.** Split big work across calls — the working dir persists between them.
+- **Big digests: parse in one call (pure), ingest in the next.** Never chain parse + ingest + `rebuild_indexes` into a single execution.
+- **Narrate progress to the user between calls** — what just finished, what runs next. Pass `progress=print` to the ingest entry points so a killed call shows how far it got.
+- **If a call dies, never restart the whole task.** Committed state is durable (I12 — every commit re-packs the ZIP atomically). Report WHICH step died, then resume after the last successful commit; re-ingesting already-committed content is a no-op (I9).
+- **Never print full KU listings.** Reports cap themselves at 5 examples per change kind ("... and N more") — trust the exact counts; never re-render the full lists.
 
 ### 4.1 ASK — the answer path
 
@@ -232,6 +244,8 @@ DOCS      raw file bytes: lib.read_body("docs:<path>") · searchable text: docs:
 GROW      lib.begin(author, why).add_ku(KnowledgeUnit(id="curated:…", kind="curated-note",
           tier="curated", source="agent", path="kb/curated/…", links=[derived-from…]), body=…).commit()
 REORG     plan → preview (before/after) → confirm → commit
+LONG OPS  every call <30s · parse and ingest in SEPARATE calls · progress=print on big ingests
+          · a dead call: report the step, resume after the last commit (I12) — never restart
 SAFETY    sources are READ-ONLY; never hand-edit KB/manifest/index; rationale = a real sentence
 PERSIST   commits auto-checkpoint into memory.zip; host retains it across sessions
 ```
