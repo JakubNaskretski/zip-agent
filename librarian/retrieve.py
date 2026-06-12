@@ -79,6 +79,87 @@ def _excerpt(lib, path, terms, width=90) -> str:
     return ("…" if start else "") + body[start:start + width].strip() + "…"
 
 
+def excerpt(lib, ku_id, text, width=120, max_hits=3) -> list:
+    """Inspect a KU body around a search term WITHOUT printing the whole file.
+
+    This is the triage tool to use BEFORE any full ``lib.read_body`` call.  It
+    reads the body, finds up to ``max_hits`` match-positioned windows around the
+    term(s) in ``text``, and returns them as a list of short strings.  Only call
+    ``lib.read_body`` when the excerpts are not enough, and only for one KU per
+    execution (MASTER_PROMPT §4.1 deep-dive protocol).
+
+    Parameters
+    ----------
+    lib:
+        The active :class:`~librarian.Librarian` instance.
+    ku_id:
+        The KU to inspect.  Raises :class:`LookupError` (with ``ku_id`` in the
+        message) if the KU is not found in the manifest.
+    text:
+        Search phrase; individual tokens are matched independently (same
+        tokenisation as :func:`search`).
+    width:
+        Characters of context on each side of the match (default 120 total
+        window).
+    max_hits:
+        Maximum number of excerpt strings to return (default 3).
+
+    Returns
+    -------
+    list of str
+        Up to ``max_hits`` match-positioned excerpt strings.  For binary/office
+        raw KUs whose body cannot be decoded as UTF-8, returns a single-element
+        list with a ``"binary body — use the #text sidecar"`` marker so the
+        caller is never left empty-handed and the call never raises.
+    """
+    ku = lib.get(ku_id)
+    if ku is None:
+        raise LookupError(f"excerpt: KU not found: {ku_id!r}")
+
+    raw_bytes = lib.store.read(ku.path)
+
+    # Detect binary bodies: try strict UTF-8 first.
+    try:
+        body = raw_bytes.decode("utf-8")
+    except UnicodeDecodeError:
+        # Office raw KUs (and any other binary blob) — decode with replace so
+        # the call never crashes; but signal clearly that a sidecar is better.
+        body_replaced = raw_bytes.decode("utf-8", errors="replace")
+        if "�" in body_replaced:
+            return ["binary body — use the #text sidecar"]
+        body = body_replaced
+
+    terms = _TOK.findall(text or "")
+    if not terms:
+        return [body[:width].strip()] if body else []
+
+    low = body.lower()
+    results: list = []
+    covered: set = set()   # character ranges already returned, to avoid overlapping windows
+
+    for term in terms:
+        tl = term.lower()
+        start_search = 0
+        while len(results) < max_hits:
+            pos = low.find(tl, start_search)
+            if pos < 0:
+                break
+            win_start = max(0, pos - width // 2)
+            win_end = win_start + width
+            # skip window if it substantially overlaps an already-returned one
+            if not any(abs(win_start - cs) < width // 2 for cs in covered):
+                covered.add(win_start)
+                prefix = "…" if win_start > 0 else ""
+                results.append(prefix + body[win_start:win_end].strip() + "…")
+            start_search = pos + len(tl)
+
+    if not results:
+        # no term matched — return a leading snippet so the caller still gets context
+        results.append(body[:width].strip())
+
+    return results[:max_hits]
+
+
 def search(con, text, k=10, source=None, lib=None) -> list:
     """Full-text search over KU title/entities/body, ranked by BM25.
 

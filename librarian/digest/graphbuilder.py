@@ -467,6 +467,100 @@ def neighbors(graph, node_id, direction="out", edge_type=None) -> list:
     return out
 
 
+def walk(graph, node_id, depth=2, limit=200, direction="out", edge_type=None) -> dict:
+    """Bounded BFS from ``node_id`` — the sanctioned multi-hop primitive.
+
+    This is THE way to do multi-hop graph traversal in ASK answers.  The caps
+    exist because the sandbox kills long-running calls silently and stdout
+    truncates at ~16k characters; never hand-roll BFS over graph results
+    (MASTER_PROMPT §4.1).
+
+    Parameters
+    ----------
+    graph:
+        The plain ``{"nodes": [...], "edges": [...]}`` graph dict returned by
+        :func:`load_graph` (or the mule/office equivalents) — one implementation
+        serves all three graph types.
+    node_id:
+        Starting node.  The start node itself is **not** included in the result
+        (consistent with :func:`neighbors` returning only the far ends).
+    depth:
+        Maximum hops from the start node (default 2).
+    limit:
+        Stop collecting after this many visited nodes, not counting the start
+        (default 200).  Nodes discovered beyond the limit are counted in
+        ``truncated`` but their details are not returned.
+    direction:
+        ``"out"`` follows src→dst edges; ``"in"`` follows dst→src edges;
+        ``"both"`` follows both directions.
+    edge_type:
+        Optional edge-type filter — only edges whose ``type`` matches are
+        followed (same semantics as :func:`neighbors`).
+
+    Returns
+    -------
+    dict
+        ``{"nodes": [{"id", "type", "label", "depth"}, ...], "truncated": int}``
+
+        Each node entry carries the ``type`` and ``label`` looked up from
+        ``graph["nodes"]`` (missing node → ``None`` for both; mirrors how
+        :func:`_node` handles externals) so the caller can triage WITHOUT
+        further lookups.  ``truncated`` is the count of nodes that were
+        discovered but not returned because ``limit`` was hit.
+    """
+    # Build adjacency index once — O(E) — instead of rescanning edges per node.
+    adj_out: dict = {}   # src -> [dst, ...]
+    adj_in: dict = {}    # dst -> [src, ...]
+    for e in graph["edges"]:
+        if edge_type and e["type"] != edge_type:
+            continue
+        s, d = e["src"], e["dst"]
+        adj_out.setdefault(s, []).append(d)
+        adj_in.setdefault(d, []).append(s)
+
+    # Node lookup for type+label — O(V) once.
+    node_meta: dict = {}
+    for n in graph["nodes"]:
+        node_meta[n["id"]] = (n.get("type"), n.get("label"))
+
+    # BFS.  All discovered nodes (within depth) are tracked in `visited` to
+    # deduplicate correctly.  Nodes are added to `result` only up to `limit`;
+    # any further discovered-but-not-collected nodes count toward `truncated`.
+    # Nodes over the limit are still enqueued so their neighbours (within the
+    # remaining depth budget) are counted — but only O(V) nodes are ever
+    # enqueued because `visited` prevents re-queueing.
+    visited: set = {node_id}
+    queue: list = [(node_id, 0)]
+    result: list = []
+    truncated = 0
+
+    while queue:
+        current, cur_depth = queue.pop(0)
+        if cur_depth >= depth:
+            continue
+        nexts: list = []
+        if direction in ("out", "both"):
+            nexts += adj_out.get(current, [])
+        if direction in ("in", "both"):
+            nexts += adj_in.get(current, [])
+        for nxt in nexts:
+            if nxt in visited:
+                continue
+            visited.add(nxt)
+            nxt_depth = cur_depth + 1
+            if len(result) < limit:
+                ntype, nlabel = node_meta.get(nxt, (None, None))
+                result.append({"id": nxt, "type": ntype, "label": nlabel,
+                               "depth": nxt_depth})
+            else:
+                truncated += 1
+            # Always enqueue within depth so further discovered nodes are counted.
+            if nxt_depth < depth:
+                queue.append((nxt, nxt_depth))
+
+    return {"nodes": result, "truncated": truncated}
+
+
 def grants_on(graph, object_name) -> list:
     """Permission sets / profiles granting access to an object."""
     return neighbors(graph, f"object/{object_name}", "in", "grants")
