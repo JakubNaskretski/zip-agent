@@ -508,3 +508,159 @@ def test_pptx_entities_always_empty(tmp_path):
                 if ku.source == "docs" and "pptx" in ku.id]
     assert len(pptx_kus) >= 1
     assert all(ku.entities == [] for ku in pptx_kus)
+
+
+# --------------------------------------------------------------------------- #
+# media-stripping tests
+# --------------------------------------------------------------------------- #
+FAKE_PNG = b"\x89PNG\r\n\x1a\n" + b"\x00" * 4096  # 4+ KB fake image bytes
+FAKE_JPEG = b"\xff\xd8\xff" + b"\x00" * 4096
+
+
+def make_pptx_with_media(root):
+    """Variant of make_pptx that also embeds a fake image and a thumbnail."""
+    deck_path = root / "slides" / "Acme Media Deck.pptx"
+    deck_path.parent.mkdir(parents=True, exist_ok=True)
+    parts = {
+        "[Content_Types].xml": PPTX_CT,
+        "ppt/presentation.xml": _pptx_presentation(["rId1"]),
+        "ppt/_rels/presentation.xml.rels": _pptx_prs_rels("slides/slide1.xml"),
+        "ppt/slides/slide1.xml": _pptx_slide(
+            title="Acme Slide Title",
+            body_paras=["Body text for round-trip verification."]),
+        # media entry — must be stripped
+        "ppt/media/image1.png": FAKE_PNG,
+        # thumbnail — must be stripped
+        "docProps/thumbnail.jpeg": FAKE_JPEG,
+    }
+    with zipfile.ZipFile(deck_path, "w") as z:
+        for member, data in parts.items():
+            if isinstance(data, str):
+                z.writestr(member, data)
+            else:
+                z.writestr(member, data)
+    return deck_path
+
+
+def _zip_members(data: bytes):
+    with zipfile.ZipFile(__import__("io").BytesIO(data)) as z:
+        return z.namelist()
+
+
+def _zip_entry(data: bytes, name: str) -> bytes:
+    with zipfile.ZipFile(__import__("io").BytesIO(data)) as z:
+        return z.read(name)
+
+
+def test_strip_media_pptx_drops_media_and_thumbnail(tmp_path):
+    """Stored raw-KU body must lack ppt/media/* and docProps/thumbnail.* but
+    be smaller than the original, and retain all XML parts byte-identical."""
+    docs = tmp_path / "docs"
+    deck = make_pptx_with_media(docs)
+    original = deck.read_bytes()
+
+    lib = Librarian(Store(tmp_path / "mem"))
+    office.ingest_office(lib, docs, "dev", "ingest media deck")
+
+    ku_id = "docs:slides/Acme Media Deck.pptx"
+    stored = lib.read_body(ku_id)
+
+    # Must be smaller (media dropped)
+    assert len(stored) < len(original)
+
+    # Dropped entries absent
+    members = _zip_members(stored)
+    assert "ppt/media/image1.png" not in members
+    assert "docProps/thumbnail.jpeg" not in members
+
+    # XML parts byte-identical to original
+    for xml_part in ("[Content_Types].xml", "ppt/presentation.xml",
+                     "ppt/slides/slide1.xml"):
+        assert _zip_entry(stored, xml_part) == _zip_entry(original, xml_part), \
+            f"{xml_part} content changed after strip"
+
+
+def test_strip_media_round_trip_engine_parses_stripped(tmp_path):
+    """Write the stored (stripped) body to a temp file and verify the engine's
+    pptx extractor can still parse slide titles and body text from it."""
+    docs = tmp_path / "docs"
+    make_pptx_with_media(docs)
+
+    lib = Librarian(Store(tmp_path / "mem"))
+    office.ingest_office(lib, docs, "dev", "ingest media deck")
+
+    stored = lib.read_body("docs:slides/Acme Media Deck.pptx")
+
+    # Write stripped bytes to a temp file and re-parse via the office digest
+    out_dir = tmp_path / "reparse"
+    out_dir.mkdir()
+    deck_copy = out_dir / "Acme Media Deck.pptx"
+    deck_copy.write_bytes(stored)
+
+    d = office.parse_office(out_dir, strip_media=False)   # already stripped
+    assert len(d.documents) == 1
+    rec = d.documents[0]
+    assert rec.doc_type == "pptx"
+    assert "Acme Slide Title" in rec.text
+    assert "Body text for round-trip verification." in rec.text
+
+
+def test_strip_media_determinism(tmp_path):
+    """Stripping the same input twice must produce identical bytes (I9)."""
+    docs = tmp_path / "docs"
+    deck = make_pptx_with_media(docs)
+    original = deck.read_bytes()
+
+    from librarian.digest.office import _strip_media
+    first = _strip_media(original)
+    second = _strip_media(original)
+    assert first == second
+
+
+def test_strip_media_reingest_noop(tmp_path):
+    """Re-ingesting the same deck (with media) must be an I9 no-op: the
+    second Report shows it unchanged and the manifest generation does not
+    advance."""
+    docs = tmp_path / "docs"
+    make_pptx_with_media(docs)
+
+    lib = Librarian(Store(tmp_path / "mem"))
+    office.ingest_office(lib, docs, "dev", "first ingest")
+    gen = lib.manifest.generation
+
+    rep, _ = office.ingest_office(lib, docs, "dev", "second ingest — must no-op")
+    assert rep.unchanged
+    assert lib.manifest.generation == gen
+
+
+def test_strip_media_free_docx_identity(tmp_path):
+    """A media-free docx must produce the ORIGINAL bytes object unchanged
+    (identity — not merely equal)."""
+    docs = make_docs_dir(tmp_path)
+
+    from librarian.digest.office import _strip_media
+    original = (docs / DOCX_REL).read_bytes()
+    result = _strip_media(original)
+    assert result is original, "media-free docx must return original object unchanged"
+
+
+def test_strip_media_pdf_passthrough(tmp_path):
+    """Non-OOXML (non-PK magic) bytes must pass through verbatim.  We test
+    this directly on _strip_media without needing pypdf installed."""
+    from librarian.digest.office import _strip_media
+
+    pdf_like = b"%PDF-1.4 fake pdf content" + b"\x00" * 128
+    assert _strip_media(pdf_like) is pdf_like
+
+
+def test_strip_media_false_keeps_original(tmp_path):
+    """strip_media=False must store the original file bytes verbatim."""
+    docs = tmp_path / "docs"
+    deck = make_pptx_with_media(docs)
+    original = deck.read_bytes()
+
+    lib = Librarian(Store(tmp_path / "mem"))
+    office.ingest_office(lib, docs, "dev", "ingest no-strip", strip_media=False)
+
+    stored = lib.read_body("docs:slides/Acme Media Deck.pptx")
+    assert stored == original

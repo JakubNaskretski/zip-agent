@@ -151,14 +151,18 @@ rep, od = office.ingest_office(lib, docs_dir, author, "ingest project documents"
 rebuild_indexes(lib, author, "rebuild after docs digest")   # separate execution
 ```
 
-Per document the agent keeps three things: the **original file** as a raw KU
-(re-openable, re-parseable on demand), a **plain-text sidecar** (`.txt` next to
-it) holding the extracted text — section titles and body text for Word,
-sheet/table/column names for Excel, slide titles + body text + speaker notes +
-chart series/category labels for PowerPoint — that is what full-text search
-hits — and a contained **structure graph** (Word heading tree; Excel sheets and
-declared tables; PowerPoint slides, optional declared sections, and charts;
-heuristic guesses are marked as such, structure is never fabricated).
+Per document the agent keeps three things: a **media-stripped working copy** as
+a raw KU — images and embedded media are stripped from OOXML files before
+storage (decks shrink ~90 %+; a confidentiality bonus: embedded screenshots and
+photos never enter `memory.zip`), while every XML part (slides, notes, tables,
+chart data) is kept byte-identical so the agent can re-parse text and chart
+labels on demand — a **plain-text sidecar** (`.txt` next to it) holding the
+extracted text — section titles and body text for Word, sheet/table/column names
+for Excel, slide titles + body text + speaker notes + chart series/category
+labels for PowerPoint — that is what full-text search hits — and a contained
+**structure graph** (Word heading tree; Excel sheets and declared tables;
+PowerPoint slides, optional declared sections, and charts; heuristic guesses are
+marked as such, structure is never fabricated).
 Confidentiality by policy: cell values, formula bodies, numeric chart data and
 author names never enter the graph or the sidecar, and document prose is never
 entity-bridged. Legacy binary `.doc` / `.xls` / `.xlsb` / `.ppt` are not parsed
