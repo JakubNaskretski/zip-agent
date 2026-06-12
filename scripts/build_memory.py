@@ -82,6 +82,10 @@ def build(dest="memory.zip", seed_dir=None, wheelhouse=None) -> Path:
         dest_wh.mkdir(parents=True)
         for w in wheels:
             shutil.copy2(w, dest_wh / w.name)
+        print(f"Apex backend in this zip: AST ({len(wheels)} wheels bundled)")
+    else:
+        print("Apex backend in this zip: regex — no wheelhouse bundled "
+              "(pass --wheelhouse DIR for the AST upgrade; see README §1.B)")
 
     if seed_dir:
         shutil.copytree(seed_dir, staging, dirs_exist_ok=True)

@@ -47,15 +47,17 @@ enough for building the ZIP and running the collectors — no install, no venv;
 the dev test suite targets 3.11+). The agent side only needs a code-interpreter
 sandbox that can run Python and keep one file (`memory.zip`) between sessions.
 
-### 1. Build the deployable ZIP
+### 1. Build the deployable ZIP — pick A or B
+
+**A. Basic (~3 MB) — regex Apex parser:**
 
 ```bash
 python3 scripts/build_memory.py memory.zip
 ```
 
-Optionally bundle the tree-sitter wheels so the Apex parser auto-upgrades from
-regex to AST inside the sandbox. Two steps — download wheels matching the
-**sandbox's** platform/Python (not your machine's), then build with them:
+**B. Full (~18 MB) — AST Apex parser, recommended. BOTH commands, in order**
+(wheels must match the **sandbox's** platform/Python — the example is
+linux x86_64 / Python 3.12 — not your machine's):
 
 ```bash
 python3 -m pip download --only-binary :all: --platform manylinux2014_x86_64 \
@@ -64,8 +66,11 @@ python3 -m pip download --only-binary :all: --platform manylinux2014_x86_64 \
 python3 scripts/build_memory.py --wheelhouse wheelhouse/ memory.zip
 ```
 
-Skip this if unsure — without it the agent simply uses the always-on regex
-Apex backend; wrong-platform wheels also degrade to that, harmlessly.
+Sanity check B before uploading: `unzip -l memory.zip | grep wheelhouse` must
+list 5 wheels — a small zip means the first command was skipped. The build
+output also states which variant you produced. A wrong-platform wheelhouse
+degrades harmlessly at boot: the agent falls back to the regex backend,
+exactly as variant A.
 
 ### 2. Set up the agent
 
