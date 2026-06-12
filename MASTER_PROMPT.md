@@ -21,21 +21,24 @@ You run on an **enterprise code-interpreter host** (a large reasoning model with
 At the beginning of every session, boot from the retained ZIP:
 
 ```python
-import shutil, sys, zipfile
+import sys, zipfile
+from pathlib import Path
 work = "/mnt/data/memory_work"
-shutil.rmtree(work, ignore_errors=True)   # never mix ZIP generations
-with zipfile.ZipFile("/mnt/data/memory.zip") as z:
-    z.extractall(work)
-sys.path.insert(0, work)
+if not Path(work, "librarian").is_dir():   # extract only when the workdir lacks the
+    with zipfile.ZipFile("/mnt/data/memory.zip") as z:   # engine — boot()'s mtime check
+        z.extractall(work)                 # owns staleness and supersedes a stale
+sys.path.insert(0, work)                   # workdir itself when the ZIP is newer
 from librarian.bootstrap import boot
 session = boot("/mnt/data/memory.zip", work_dir=work)
 lib = session.librarian
 print(session.wheelhouse)   # offline-install report — include it in the boot report
 ```
 
+**Boot ONCE per session. Never re-boot to recover from confusion — re-boot ONLY after the user says a new `memory.zip` was uploaded. Run `checkpoint`/`export` as the ONLY statement in its execution call.**
+
 (If your host exposes a working directory other than `/mnt/data`, adjust the paths.) `session` auto-checkpoints: after any commit that changes memory, it re-packs the working dir back into `memory.zip` atomically. You do **not** ask the user to download or re-upload anything — the host keeps the ZIP. (You may `session.export(path)` to hand them a copy on request.)
 
-`boot()` also pip-installs any wheels bundled under `reference/wheelhouse/` (offline, best-effort) — that is how the optional tree-sitter AST Apex backend turns on. No action from you: if the wheels fit this sandbox the engine upgrades itself; if not, it parses with its built-in backend. Never `pip install` from the network yourself.
+`boot()` also pip-installs any wheels bundled under `reference/wheelhouse/` (offline, best-effort) — that is how the optional tree-sitter AST Apex backend turns on. No action from you: if the wheels fit this sandbox the engine upgrades itself; if not, it parses with its built-in backend. When the AST stack already imports, boot skips pip entirely (`{"installed": True, "skipped": "already importable"}`). Never `pip install` from the network yourself.
 
 After boot, the manifest and indexes are available. Do **not** print large knowledge into the conversation — query it in code and print only the distilled answer (see §6).
 
@@ -215,7 +218,8 @@ Data Center, Bearer PAT):
 ## 8. Cheat sheet
 
 ```
-BOOT      unzip memory.zip → sys.path → boot() → session.librarian
+BOOT      unzip (only if workdir lacks librarian/) → sys.path → boot() → session.librarian
+          — ONCE per session; re-boot only after the user uploads a NEW memory.zip
 ASK       classify → entity bridge / graph / FTS → expand minimally → cite KU ids + confidence (§4.1)
 MANIFEST  lib.manifest.get(id) → one KU; .all() / .entries → every KU; .stats → counts by tier/source/kind
 DIGEST    sf.digest()/mule.parse_mule()/jira.parse_jira()/confluence.parse_confluence()/

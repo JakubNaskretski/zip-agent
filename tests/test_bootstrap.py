@@ -154,3 +154,48 @@ def test_boot_surfaces_wheelhouse_report(tmp_path):
     z = pack_zip(src, tmp_path / "memory.zip")
     s = boot(z, work_dir=tmp_path / "w", install_wheelhouse=True, autosave=False)
     assert s.wheelhouse == {"installed": False, "reason": "no wheelhouse bundled"}
+
+
+def test_wheelhouse_skips_pip_when_ast_stack_already_importable(tmp_path, monkeypatch):
+    """Re-boot guard: if tree_sitter + tree_sitter_language_pack already import,
+    _install_wheelhouse must not invoke pip at all."""
+    import subprocess
+    import types
+    from librarian.bootstrap import _install_wheelhouse
+
+    wh = tmp_path / "reference" / "wheelhouse"
+    wh.mkdir(parents=True)
+    (wh / "tree_sitter-0.25.2-cp310-abi3-manylinux2014_x86_64.whl").write_bytes(b"x")
+    monkeypatch.setitem(sys.modules, "tree_sitter", types.ModuleType("tree_sitter"))
+    monkeypatch.setitem(sys.modules, "tree_sitter_language_pack",
+                        types.ModuleType("tree_sitter_language_pack"))
+
+    def _no_pip(*a, **kw):
+        raise AssertionError("pip must not run when the AST stack already imports")
+    monkeypatch.setattr(subprocess, "run", _no_pip)
+
+    assert _install_wheelhouse(tmp_path) == {"installed": True,
+                                             "skipped": "already importable"}
+
+
+def test_wheelhouse_still_installs_when_ast_stack_missing(tmp_path, monkeypatch):
+    """With the probe failing, the existing pip flow runs unchanged."""
+    import subprocess
+    import types
+    from librarian.bootstrap import _install_wheelhouse
+
+    wh = tmp_path / "reference" / "wheelhouse"
+    wh.mkdir(parents=True)
+    (wh / "tree_sitter-0.25.2-cp310-abi3-manylinux2014_x86_64.whl").write_bytes(b"x")
+    # None entries make `import tree_sitter` raise ImportError deterministically
+    monkeypatch.setitem(sys.modules, "tree_sitter", None)
+    monkeypatch.setitem(sys.modules, "tree_sitter_language_pack", None)
+
+    calls = []
+    def _fake_pip(cmd, **kw):
+        calls.append(cmd)
+        return types.SimpleNamespace(returncode=0, stdout="", stderr="")
+    monkeypatch.setattr(subprocess, "run", _fake_pip)
+
+    assert _install_wheelhouse(tmp_path) == {"installed": True, "count": 1}
+    assert len(calls) == 1 and "--no-index" in calls[0]

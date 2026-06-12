@@ -15,20 +15,29 @@ remembering to save.
 
 Runtime entry (paste into the sandbox at session start)::
 
-    import shutil, sys, zipfile
+    import sys, zipfile
+    from pathlib import Path
     work = "/mnt/data/memory_work"
-    shutil.rmtree(work, ignore_errors=True)   # never mix ZIP generations
-    with zipfile.ZipFile("/mnt/data/memory.zip") as z:
-        z.extractall(work)
+    # extract only when the workdir lacks the engine — no unconditional rmtree:
+    # boot()'s mtime check owns staleness and supersedes a stale workdir itself
+    # when the ZIP is newer (a fresh upload)
+    if not Path(work, "librarian").is_dir():
+        with zipfile.ZipFile("/mnt/data/memory.zip") as z:
+            z.extractall(work)
     sys.path.insert(0, work)
     from librarian.bootstrap import boot
     session = boot("/mnt/data/memory.zip", work_dir=work)
     session.wheelhouse   # offline-install report — surface it in the boot report
     # ... session.librarian.begin(author, rationale)... .commit()  (auto-checkpoints)
+
+Boot ONCE per session — never as a recovery ritual; the wheelhouse install is
+skipped when already importable, but extract+pip on a slow sandbox is still
+real money, and a mid-task re-boot risks in-flight state.
 """
 from __future__ import annotations
 
 import glob
+import importlib
 import shutil
 import subprocess
 import sys
@@ -109,6 +118,16 @@ def _install_wheelhouse(work_dir) -> dict:
     wheels = sorted(glob.glob(str(wh / "*.whl")))
     if not wheels:
         return {"installed": False, "reason": "wheelhouse empty"}
+    # Re-boot guard: pip over the wheelhouse costs real time on slow sandbox
+    # CPUs (the grammar wheel alone is ~20 MB), and hosts re-run boot
+    # mid-session. If the AST stack already imports, the wheels are in — skip
+    # pip entirely. A broken half-install falls through to the normal flow.
+    try:
+        importlib.import_module("tree_sitter")
+        importlib.import_module("tree_sitter_language_pack")
+        return {"installed": True, "skipped": "already importable"}
+    except Exception:
+        pass
     # --upgrade matters: sandboxes often PREINSTALL an older tree-sitter, and
     # without it pip leaves the old (property-style-API) binding in place — the
     # engine's probe then correctly refuses it and Apex stays on regex. Retry
