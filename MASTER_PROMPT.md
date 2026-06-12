@@ -102,7 +102,7 @@ What the Librarian guarantees (so you don't have to police it yourself): one man
   rep, od = office.ingest_office(lib, docs_dir, author, rationale, progress=print)
   ```
 
-  Pass `progress=print` on any big digest (it prints a one-line count every 200 files/KUs, so a killed call shows where it stopped — see "Long operations" below); the Mule corpus is small enough not to need it.
+  Pass `progress=print` on any big digest (it prints a one-line count every 1000 files/KUs plus a compact final line, so a killed call shows where it stopped — see "Long operations" below); the Mule corpus is small enough not to need it.
 
   Re-ingesting unchanged content is a no-op (the report shows new/changed/unchanged). Absence in a scoped re-ingest is **not** deletion — flag it, never auto-retire. Surface `unresolved`/`errors`/`skipped` from the digest, never swallow them. **After a digest, run `rebuild_indexes(lib, author, "rebuild indexes after <source> digest")`** (`from librarian import rebuild_indexes`) so search reflects the new data. Jira/Confluence raw KUs hold each issue/page dump verbatim (`lib.read_body("jira:<PROJ>/<KEY>")` is the full detail); their `entities` carry structured ids only (issue key / space key + page id) — never extract prose names into the bridge. Office documents get THREE artifacts each: the raw KU `docs:<path>` holding the ORIGINAL file bytes (`lib.read_body` returns them verbatim — re-open/re-parse on demand), a plain-text sidecar `docs:<path>#text` that FTS indexes (section titles + text, sheet/table/column names), and the contained `docs:graph/docs` structure graph; their `entities` are ALWAYS empty — filenames, titles, headings and column names never enter the bridge.
 - **GROW** — author a curated KU (glossary term, cross-source mapping, decision, lesson) when you've confirmed something worth keeping. Always link it `derived-from` the raw KUs it rests on; if those later change, the Librarian flags your note `needs-review`. The shape that validates:
@@ -125,13 +125,45 @@ Proactively surface curated KUs flagged `review_needed` — they were built on s
 
 ### Long operations — sandbox survival rules
 
-Your sandbox kills any single execution that runs too long, and the kernel dies **silently** mid-call; long stdout gets truncated. Work accordingly:
+Your sandbox kills any single execution that runs too long, and the kernel dies **silently** mid-call; stdout truncates around 16k characters. Each step below is **one short execution** — narrate to the user between them.
 
-- **Keep every execution under ~30 s.** Split big work across calls — the working dir persists between them.
-- **Big digests: parse in one call (pure), ingest in the next.** Never chain parse + ingest + `rebuild_indexes` into a single execution.
-- **Narrate progress to the user between calls** — what just finished, what runs next. Pass `progress=print` to the ingest entry points so a killed call shows how far it got.
-- **If a call dies, never restart the whole task.** Committed state is durable (I12 — every commit re-packs the ZIP atomically). Report WHICH step died, then resume after the last successful commit; re-ingesting already-committed content is a no-op (I9).
-- **Never print full KU listings.** Reports cap themselves at 5 examples per change kind ("... and N more") — trust the exact counts; never re-render the full lists.
+**Five-call digest protocol** (SF shown; swap module/function for other sources):
+
+**Step 1 — PARSE + PREVIEW** (pure, nothing committed):
+```python
+dg = sf.digest(force_app_dir, progress=print)
+print(dg.summary())   # compact dict: KUs/nodes/edges/unresolved/errors/skipped
+```
+Show the summary to the user and ask for confirmation before step 2.
+
+**Step 2 — INGEST + COMMIT** (pass `dg=` if the kernel survived step 1; omit if recycled — ingest re-parses, parse is cheap relative to the kill budget):
+```python
+rep, dg = sf.ingest_salesforce(lib, force_app_dir, author, rationale,
+                               progress=print, dg=dg)   # dg= skips re-parse
+print(rep)   # capped Report repr — trust the counts
+```
+
+**Step 3 — REBUILD INDEXES** (its own call):
+```python
+from librarian import rebuild_indexes
+rep = rebuild_indexes(lib, author, "rebuild indexes after <source> digest",
+                      progress=print)
+print(rep)
+```
+
+**Step 4 — VERIFY**:
+```python
+print(session.stats())   # counts by source + last changelog entry
+```
+
+**Step 5 — EXPORT** (only on user request; the ONLY statement in its execution):
+```python
+session.export("/mnt/data/memory.zip")
+```
+
+**Recovery rule:** if any call dies, NEVER restart the whole task. Open a fresh execution, run `session.stats()` to see durable committed state, then resume at the step that died. Re-ingesting committed content is a no-op (I9).
+
+**Stdout budget:** keep total printed output per execution well under ~10k characters. Print compact one-line summaries; never loop-print per item. Trust Report's capped repr (5 examples per change kind, then "… and N more"). Progress fires every 1000 files/KUs — do not re-print the same counts.
 
 ### 4.1 ASK — the answer path
 
@@ -244,8 +276,8 @@ DOCS      raw file bytes: lib.read_body("docs:<path>") · searchable text: docs:
 GROW      lib.begin(author, why).add_ku(KnowledgeUnit(id="curated:…", kind="curated-note",
           tier="curated", source="agent", path="kb/curated/…", links=[derived-from…]), body=…).commit()
 REORG     plan → preview (before/after) → confirm → commit
-LONG OPS  every call <30s · parse and ingest in SEPARATE calls · progress=print on big ingests
-          · a dead call: report the step, resume after the last commit (I12) — never restart
+LONG OPS  five-call protocol (§4 "Long operations"): 1-PARSE+PREVIEW 2-INGEST 3-REBUILD 4-VERIFY 5-EXPORT
+          · each step one execution · progress=print · dead call: stats() then resume · never restart
 SAFETY    sources are READ-ONLY; never hand-edit KB/manifest/index; rationale = a real sentence
 PERSIST   commits auto-checkpoint into memory.zip; host retains it across sessions
 ```
