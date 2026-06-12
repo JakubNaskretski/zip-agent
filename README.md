@@ -103,12 +103,16 @@ it. Under the hood that is:
 ```python
 from librarian.digest import graphbuilder as sf
 from librarian import rebuild_indexes
-rep, dg = sf.ingest_salesforce(lib, "force-app", author, "ingest org metadata")
-rebuild_indexes(lib, author, "rebuild after SF digest")
+dg = sf.digest("force-app", progress=print)                  # 1: parse + preview
+rep, dg = sf.ingest_salesforce(lib, "force-app", author,     # 2: ingest + commit
+                               "ingest org metadata", dg=dg)
+rebuild_indexes(lib, author, "rebuild after SF digest")      # 3: own execution
 ```
 
-The agent will preview the digest (objects, classes, flows, edges, errors) and
-ask before committing. Every graph node carries `source_path` back to the file
+The agent runs each step as its own short execution (the MASTER_PROMPT "Long
+operations" five-call protocol — sandboxes kill long calls and truncate long
+stdout), previews the digest (objects, classes, flows, edges, errors), and
+asks before committing. Every graph node carries `source_path` back to the file
 that defined it, and every source file is readable in full via the raw KU —
 the graph is for navigating, the source for detail.
 
@@ -142,9 +146,9 @@ ingest → rebuild-indexes flow:
 
 ```python
 from librarian.digest import office
-office.parse_office(docs_dir).summary()   # preview: documents/doc_types/nodes/errors
-rep, od = office.ingest_office(lib, docs_dir, author, "ingest project documents")
-rebuild_indexes(lib, author, "rebuild after docs digest")
+od = office.parse_office(docs_dir)        # preview via od.summary(): documents/doc_types/nodes/errors
+rep, od = office.ingest_office(lib, docs_dir, author, "ingest project documents", dg=od)
+rebuild_indexes(lib, author, "rebuild after docs digest")   # separate execution
 ```
 
 Per document the agent keeps three things: the **original file** as a raw KU

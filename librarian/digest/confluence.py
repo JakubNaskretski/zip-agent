@@ -36,6 +36,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from ..schema import KnowledgeUnit
+from ._progress import done as _done
 from ._progress import extract_in_chunks as _extract_in_chunks
 from ._progress import tick as _tick
 
@@ -119,8 +120,9 @@ def parse_confluence(dump_dir, progress=None) -> ConfluenceDigest:
     the extractor raises on lands in ``errors``/``skipped`` — surfaced, not
     dropped.
 
-    ``progress`` (callable, e.g. ``print``): one-line count every 200 files —
-    the extraction loop dominates a big-dump digest (MASTER_PROMPT §4)."""
+    ``progress`` (callable, e.g. ``print``): one-line count every ``EVERY``
+    files (default 1000) — the extraction loop dominates a big-dump digest
+    (MASTER_PROMPT §4)."""
     root = Path(dump_dir)
     builder = (_GraphBuilder().register(*_confluence_extractors())
                .register_resolver(*_gb_default_resolvers()))
@@ -183,17 +185,25 @@ def to_kus(d: ConfluenceDigest):
     ), _gb_persistence.to_json(d.graph, redact_text=True)
 
 
-def ingest_confluence(lib, dump_dir, author, rationale, progress=None):
+def ingest_confluence(lib, dump_dir, author, rationale, progress=None, *, dg=None):
     """Parse a Confluence collector dump and commit it through the Librarian.
     Returns ``(Report, ConfluenceDigest)``. Re-ingesting unchanged dumps is a
-    no-op (I9). ``progress=print`` narrates every 200 files/KUs
-    (MASTER_PROMPT §4)."""
-    d = parse_confluence(dump_dir, progress=progress)
+    no-op (I9). ``progress=print`` narrates every ``EVERY`` files/KUs
+    (MASTER_PROMPT §4).
+
+    ``dg`` (keyword-only): pass a pre-parsed :class:`ConfluenceDigest` from a
+    preceding ``parse_confluence()`` call to skip the re-parse. ``dump_dir``
+    is still required by the signature but is unused for parsing when ``dg``
+    is given."""
+    if dg is None:
+        dg = parse_confluence(dump_dir, progress=progress)
     txn = lib.begin(author, rationale)
-    for staged, (ku, body) in enumerate(to_kus(d), 1):
+    staged = 0
+    for staged, (ku, body) in enumerate(to_kus(dg), 1):
         txn.ingest_ku(ku, body=body)
         _tick(progress, "confluence ingest", staged)
-    return txn.commit(), d
+    _done(progress, "confluence ingest", staged)
+    return txn.commit(), dg
 
 
 # --------------------------------------------------------------------------- #

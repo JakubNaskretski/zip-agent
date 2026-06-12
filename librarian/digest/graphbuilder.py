@@ -41,6 +41,7 @@ import json
 from pathlib import Path
 
 from ..schema import KnowledgeUnit
+from ._progress import done as _done
 from ._progress import extract_in_chunks as _extract_in_chunks
 from ._progress import tick as _tick
 
@@ -250,8 +251,9 @@ def digest(force_app_dir, progress=None) -> Digest:
     graph is built from the Salesforce extractors only (a force-app never
     matches the Confluence/Jira/Mule extractors, so the output is identical).
 
-    ``progress`` (callable, e.g. ``print``): one-line count every 200 files —
-    the extraction loop dominates a big-org digest (MASTER_PROMPT §4)."""
+    ``progress`` (callable, e.g. ``print``): one-line count every ``EVERY``
+    files (default 1000) — the extraction loop dominates a big-org digest
+    (MASTER_PROMPT §4)."""
     root = Path(force_app_dir)
     builder = (_GraphBuilder().register(*_sf_extractors())
                .register_resolver(*_gb_default_resolvers()))
@@ -307,19 +309,27 @@ def _tool_ku():
 # --------------------------------------------------------------------------- #
 # ingest
 # --------------------------------------------------------------------------- #
-def ingest_salesforce(lib, force_app_dir, author, rationale, progress=None):
+def ingest_salesforce(lib, force_app_dir, author, rationale, progress=None, *, dg=None):
     """Parse a force-app tree and commit it through the Librarian. Returns
     ``(Report, Digest)``. Re-ingesting unchanged content is a no-op (I9); the
     built-in engine KU is registered once (idempotent). ``progress=print``
-    narrates every 200 files/KUs (MASTER_PROMPT §4 long-operations rules)."""
-    dg = digest(force_app_dir, progress=progress)
+    narrates every ``EVERY`` files/KUs (MASTER_PROMPT §4 long-operations rules).
+
+    ``dg`` (keyword-only): pass a pre-parsed :class:`Digest` from a preceding
+    ``digest()`` call to skip the re-parse (useful in the numbered multi-call
+    protocol when the kernel survived step 1). ``force_app_dir`` is still
+    required by the signature but is unused for parsing when ``dg`` is given."""
+    if dg is None:
+        dg = digest(force_app_dir, progress=progress)
     txn = lib.begin(author, rationale)
     if lib.get(TOOL_ID) is None:
         tool_ku, tool_body = _tool_ku()
         txn.add_ku(tool_ku, body=tool_body)
+    staged = 0
     for staged, (ku, body) in enumerate(dg.kus, 1):
         txn.ingest_ku(ku, body=body)
         _tick(progress, "sf ingest", staged)
+    _done(progress, "sf ingest", staged)
     return txn.commit(), dg
 
 

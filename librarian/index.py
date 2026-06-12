@@ -20,6 +20,7 @@ import sqlite3
 import tempfile
 from pathlib import Path
 
+from .digest._progress import EVERY as _EVERY
 from .schema import KnowledgeUnit, content_hash
 
 INDEX_ID = "agent:index/search"
@@ -58,8 +59,11 @@ def load_sqlite(data: bytes):
     return con
 
 
-def build_index(lib):
-    """Return (sqlite_bytes, logical_hash) for the current KB state."""
+def build_index(lib, progress=None):
+    """Return (sqlite_bytes, logical_hash) for the current KB state.
+
+    ``progress`` (callable, e.g. ``print``): one-line count every ``EVERY``
+    KUs during the dominant FTS population loop, plus a compact final line."""
     con = sqlite3.connect(":memory:")
     con.execute("CREATE TABLE entities(name TEXT, name_norm TEXT, ku_id TEXT, source TEXT, kind TEXT)")
     con.execute("CREATE INDEX ix_ent ON entities(name_norm)")
@@ -71,6 +75,7 @@ def build_index(lib):
     con.execute("CREATE TABLE docmap(rowid INTEGER PRIMARY KEY, ku_id TEXT, "
                 "source TEXT, title TEXT, path TEXT)")
     sig = []
+    indexed = 0
     for ku in sorted(lib.manifest.all(), key=lambda k: k.id):
         if ku.status != "active" or ku.id == INDEX_ID:
             continue
@@ -93,6 +98,14 @@ def build_index(lib):
                 con.execute("INSERT INTO docmap VALUES(?,?,?,?,?)",
                             (cur.lastrowid, ku.id, ku.source, ku.title, ku.path))
         sig.append([ku.id, sorted(ents), ku.content_hash])
+        indexed += 1
+        if progress is not None and indexed % _EVERY == 0:
+            progress(f"index rebuild: {indexed} KUs indexed")
+    if progress is not None:
+        if indexed % _EVERY != 0 and indexed > 0:
+            progress(f"index rebuild: done — {indexed} KUs indexed")
+        elif indexed > 0:
+            progress(f"index rebuild: done — {indexed} KUs indexed")
     con.commit()
     data = _serialize(con)
     con.close()
@@ -100,10 +113,13 @@ def build_index(lib):
     return data, logical
 
 
-def rebuild_indexes(lib, author, rationale):
+def rebuild_indexes(lib, author, rationale, progress=None):
     """Build the search index and commit it as a derived KU. Idempotent when the
-    KB is unchanged (the logical hash drives the no-op). Returns the Report."""
-    data, logical = build_index(lib)
+    KB is unchanged (the logical hash drives the no-op). Returns the Report.
+
+    ``progress`` (callable, e.g. ``print``): one-line count every ``EVERY``
+    KUs during the FTS population loop, plus a compact final line."""
+    data, logical = build_index(lib, progress=progress)
     ku = KnowledgeUnit(
         id=INDEX_ID, kind="index", tier="indexes", source="agent",
         path=INDEX_PATH, title="Search index (entity bridge + FTS)",
