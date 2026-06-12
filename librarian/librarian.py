@@ -106,12 +106,23 @@ class Transaction:
             started_at=_utcnow(), pending=[], path=str(lib.store.session_path),
         )
         self.session.flush()
+        self._unflushed = 0
 
     # ---- staging ----
+    # Bulk-ingest debounce: rebuilding + flushing the whole session file per
+    # staged op is O(n²) over a digest (the 10k-KU profile spent 97% of ingest
+    # in json.dumps). Appending is O(1); the on-disk state (I11) lags a crash by
+    # at most _FLUSH_EVERY ops — safe, because a dead transaction is re-run as a
+    # whole and ingest is idempotent (I9) — and is exact again at preview/commit.
+    _FLUSH_EVERY = 200
+
     def _stage(self, op: _Op) -> "Transaction":
         self._ops.append(op)
-        self.session.pending = [o.summary() for o in self._ops]
-        self.session.flush()
+        self.session.pending.append(op.summary())
+        self._unflushed += 1
+        if self._unflushed >= self._FLUSH_EVERY:
+            self.session.flush()
+            self._unflushed = 0
         self._plan = None
         return self
 
@@ -139,6 +150,9 @@ class Transaction:
 
     # ---- validation against a projection (never the live manifest) ----
     def preview(self) -> Report:
+        if self._unflushed:                    # make the on-disk state (I11) exact
+            self.session.flush()               # at every decision point
+            self._unflushed = 0
         rep = Report()
         proj = self.lib.manifest.copy()
         writes: dict = {}
