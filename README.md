@@ -12,7 +12,7 @@ This repo is the agent's **engine and build** — not a research write-up.
 
 | Path | What it is |
 |------|------------|
-| [`librarian/`](librarian/) | The engine — transactional KB mutation (the Librarian), manifest, schema, changelog, bootstrap, retrieve/index, and [`digest/`](librarian/digest/) source adapters (Salesforce, Mule, Jira, Confluence). Real importable modules, `pytest`-tested. Zero runtime dependencies (stdlib only). |
+| [`librarian/`](librarian/) | The engine — transactional KB mutation (the Librarian), manifest, schema, changelog, bootstrap, retrieve/index, and [`digest/`](librarian/digest/) source adapters (Salesforce, Mule, Jira, Confluence, office documents). Real importable modules, `pytest`-tested. Zero runtime dependencies (stdlib only). |
 | [`vendor/graphbuilder/`](vendor/graphbuilder/) | Vendored Salesforce/OmniStudio metadata-graph parsing engine (plus the Mule/Jira/Confluence extractors and the read-only Jira/Confluence collectors), used by the [`digest/`](librarian/digest/) adapters. |
 | [`MASTER_PROMPT.md`](MASTER_PROMPT.md) | The agent's persona + operating protocols — pasted into the agent builder's instructions field, **outside** the ZIP. |
 | [`scripts/build_memory.py`](scripts/build_memory.py) | Builds the deployable `memory.zip` — the engine packaged inside its own memory. |
@@ -29,9 +29,10 @@ shippable agent.
 
 ## Status
 
-The Librarian engine, the Salesforce, Mule, Jira and Confluence digests, the
-read-only Jira/Confluence collectors (vendored with the engine), and the
-cross-source retrieve / entity-bridge are **implemented and tested**. Still to
+The Librarian engine, the Salesforce, Mule, Jira, Confluence and office-document
+(`.docx`/`.xlsx`) digests, the read-only Jira/Confluence collectors (vendored
+with the engine), and the cross-source retrieve / entity-bridge are
+**implemented and tested**. Still to
 come: MUnit/Apex test generation and the built-in Domain KB port.
 
 ```bash
@@ -131,22 +132,46 @@ and ask the agent to digest — same preview → confirm → ingest flow
 (unchanged items are skipped) and a partial collection is flagged with an
 `.incomplete` sentinel, never silently pruned.
 
-### 5. Ask questions
+### 5. Feed it documents (Word / Excel)
+
+Zip a folder of `.docx` / `.xlsx` / `.xlsm` documents (specs, mapping
+workbooks), upload it, and ask the agent to digest — same preview → confirm →
+ingest → rebuild-indexes flow:
+
+```python
+from librarian.digest import office
+office.parse_office(docs_dir).summary()   # preview: documents/doc_types/nodes/errors
+rep, od = office.ingest_office(lib, docs_dir, author, "ingest project documents")
+rebuild_indexes(lib, author, "rebuild after docs digest")
+```
+
+Per document the agent keeps three things: the **original file** as a raw KU
+(re-openable, re-parseable on demand), a **plain-text sidecar** (`.txt` next to
+it) holding the extracted section text and sheet/table/column names — that is
+what full-text search hits — and a contained **structure graph** (heading tree,
+sheets, declared tables; heuristic guesses are marked as such, structure is
+never fabricated). Confidentiality by policy: cell values, formula bodies and
+author names never enter the graph or the sidecar, and document prose is never
+entity-bridged. Legacy binary `.doc` / `.xls` / `.xlsb` are not parsed (convert
+them first); `.xlsm` is parsed with macro content ignored.
+
+### 6. Ask questions
 
 The agent answers from the graphs + full-text search: "which flows touch
 MeterPoint__c?", "what does the Acme record page show?", "which Jira tickets
-mention this class?" — and can always open the underlying source for detail.
-Each source (Salesforce, Mule, Jira, Confluence) stays its own contained
-graph; nothing is cross-linked automatically.
+mention this class?", "what does the design doc say about retries?" — and can
+always open the underlying source for detail. Each source (Salesforce, Mule,
+Jira, Confluence, documents) stays its own contained graph; nothing is
+cross-linked automatically.
 
-### 6. Let it grow
+### 7. Let it grow
 
 Any knowledge the agent adds goes through the Librarian's transaction
 (begin → stage → preview → commit) and ends in a **new** `memory.zip` it hands
 back to you. Download it and use it as the next session's upload — that file
 is the agent's entire state.
 
-### 7. Upgrading the agent (new code, same knowledge)
+### 8. Upgrading the agent (new code, same knowledge)
 
 The ZIP is code **and** state in one file, so shipping a new engine build must
 not cost the agent its ingested knowledge. Build the new code ZIP as in step 1,
