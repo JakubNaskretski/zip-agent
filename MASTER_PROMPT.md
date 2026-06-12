@@ -105,7 +105,7 @@ What the Librarian guarantees (so you don't have to police it yourself): one man
   Pass `progress=print` on any big digest (it prints a one-line count every 1000 files/KUs plus a compact final line, so a killed call shows where it stopped — see "Long operations" below); the Mule corpus is small enough not to need it.
 
   Re-ingesting unchanged content is a no-op (the report shows new/changed/unchanged). Absence in a scoped re-ingest is **not** deletion — flag it, never auto-retire. Surface `unresolved`/`errors`/`skipped` from the digest, never swallow them. **After a digest, run `rebuild_indexes(lib, author, "rebuild indexes after <source> digest")`** (`from librarian import rebuild_indexes`) so search reflects the new data. Jira/Confluence raw KUs hold each issue/page dump verbatim (`lib.read_body("jira:<PROJ>/<KEY>")` is the full detail); their `entities` carry structured ids only (issue key / space key + page id) — never extract prose names into the bridge. Office documents get THREE artifacts each: the raw KU `docs:<path>` holding a media-stripped working copy (images/embedded media removed; every XML part kept — re-open/re-parse text, tables and chart data on demand), a plain-text sidecar `docs:<path>#text` that FTS indexes (Word: section titles + text; Excel: sheet/table/column names; PowerPoint: slide titles + body text + speaker notes + chart series/category labels), and the contained `docs:graph/docs` structure graph; their `entities` are ALWAYS empty — filenames, titles, headings and column names never enter the bridge.
-- **GROW** — author a curated KU (glossary term, cross-source mapping, decision, lesson) when you've confirmed something worth keeping. Always link it `derived-from` the raw KUs it rests on; if those later change, the Librarian flags your note `needs-review`. The shape that validates:
+- **GROW** — author a curated KU (glossary term, cross-source mapping, decision, lesson) when you've confirmed something worth keeping. Always link it `derived-from` the raw KUs it rests on; if those later change, the Librarian flags your note `needs-review`. To teach the alias index new terms — common abbreviations, Polish vocabulary, or domain synonyms — author a glossary KU: id `curated:glossary/<slug>`, `entities` = the canonical name(s) exactly as they appear in the entity bridge, body = one alias per line (`#` lines are comments). After the next `rebuild_indexes`, every body line resolves to its canonicals via `retrieve.resolve_name`. The shape that validates:
 
   ```python
   from librarian import KnowledgeUnit
@@ -178,6 +178,16 @@ mg  = mule.load_graph(lib)         # Mule flow graph (once Mule is ingested)
 og  = office.load_graph(lib)       # office docs structure graph (sections/sheets/tables)
 ```
 
+**Step 0 — resolve imprecise names first.** If the name doesn't hit exactly, or the user used prose, abbreviations, or domain vocabulary ("service point", "sp", "punkt poboru" / other Polish terms) — resolve before routing:
+
+```python
+retrieve.resolve_name(con, "service point")
+# → [{"name": "ServicePoint__c", "kus": 4, "via": "mech"}, ...]
+# pick or confirm the winner, then route as usual
+```
+
+`resolve_name` covers mechanical variants (CamelCase split, `__c`/`__r` strip, initials acronym), graph display labels and `label_<locale>` attrs (Polish business vocabulary is a primary use case), and curated glossary entries. Returns an empty list — never a fuzzy guess. `entity_like` stays the right tool for prefix/autocomplete typing.
+
 **Step 1 — classify the question:**
 - a *named thing* ("what is X", "where is X used") → **entity bridge**
 - a *relationship* ("what calls X", "who can access Y", "what fires when Z changes") → **graph**
@@ -187,8 +197,9 @@ og  = office.load_graph(lib)       # office docs structure graph (sections/sheet
 
 | Question shape | Call |
 |----------------|------|
+| Name is imprecise / prose / abbreviation / Polish vocabulary | `retrieve.resolve_name(con, "text")` → ranked candidates → confirm, then route |
 | Where is `Name` used / which sources mention it | `retrieve.find_entity(con, "Name")` → KUs; `retrieve.cross_source(con, "Name")` → grouped by source |
-| Not sure of the exact name | `retrieve.entity_like(con, "prefix")` to disambiguate |
+| Not sure of the exact name (prefix / autocomplete) | `retrieve.entity_like(con, "prefix")` to disambiguate |
 | Keyword / prose search | `retrieve.search(con, "text", k=8, lib=lib)` → ranked KUs + snippets (pass `lib` — snippets are read from KU bodies on demand); scope with `source="jira"` etc. |
 | A KU's metadata / its body | `lib.get(ku_id)` → manifest entry (title/entities/links/provenance); `lib.read_body(ku_id)` → content |
 | Fields / structure of an object | `sf.fields_of(g, "Obj")` |
@@ -274,7 +285,8 @@ Data Center, Bearer PAT):
 ```
 BOOT      unzip (only if workdir lacks librarian/) → sys.path → boot() → session.librarian
           — ONCE per session; re-boot only after the user uploads a NEW memory.zip
-ASK       classify → entity bridge / graph / FTS → expand minimally → cite KU ids + confidence (§4.1)
+ASK       step-0: imprecise name / abbreviation / Polish vocab → retrieve.resolve_name(con, "text") → confirm winner
+          then: classify → entity bridge / graph / FTS → expand minimally → cite KU ids + confidence (§4.1)
           multi-hop: sf.walk(g, node_id, depth=2) · body peek: retrieve.excerpt(lib, ku_id, "term")
           deep-dive: triage first (walk/search snippets/lib.get) → excerpt → read_body only if needed
           NEVER loop read_body over graph results · NEVER hand-roll BFS · one body per execution

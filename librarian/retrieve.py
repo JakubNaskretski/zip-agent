@@ -160,6 +160,93 @@ def excerpt(lib, ku_id, text, width=120, max_hits=3) -> list:
     return results[:max_hits]
 
 
+def resolve_name(con, text, limit=10) -> list:
+    """Step-0 primitive for imprecise-name resolution.
+
+    Normalize ``text`` (lowercase, collapse whitespace) then look it up in two
+    ways:
+      (a) exact match in ``entities.name_norm`` — direct bridge hit;
+      (b) exact match in ``aliases.alias`` joined back to ``entities`` via
+          ``entities.name = aliases.canonical``.
+
+    The two result sets are unioned, deduplicated by canonical name, ranked by
+    the number of DISTINCT KU ids that mention the canonical (descending), and
+    capped at ``limit``.  A canonical reachable by multiple routes reports the
+    best ``via`` in priority order: ``"exact"`` > ``"curated"`` > ``"label"`` >
+    ``"mech"``.
+
+    Returns a list of dicts::
+
+        [{"name": <canonical entity name>, "kus": <int>, "via": <str>}, ...]
+
+    Empty list when nothing matches — **never a fuzzy guess**.  Feed the winner
+    into :func:`find_entity`, :func:`cross_source`, or the graph helpers.
+
+    Docstring: step-0 primitive for imprecise names; feed the winner into
+    find_entity/cross_source/graph helpers.
+    """
+    q = " ".join(text.lower().split())
+    if not q:
+        return []
+
+    _VIA_RANK = {"exact": 0, "curated": 1, "label": 2, "mech": 3}
+
+    # Gather candidates: name → (ku_count, best_via)
+    candidates: dict = {}
+
+    # (a) exact entities.name_norm match
+    rows = con.execute(
+        "SELECT name, COUNT(DISTINCT ku_id) AS n FROM entities WHERE name_norm=? "
+        "GROUP BY name",
+        (q,),
+    ).fetchall()
+    for name, n in rows:
+        best = candidates.get(name)
+        if best is None or _VIA_RANK["exact"] < _VIA_RANK[best[1]]:
+            candidates[name] = (n, "exact")
+
+    # (b) alias match → join back to entities
+    rows = con.execute(
+        "SELECT e.name, COUNT(DISTINCT e.ku_id) AS n, a.via "
+        "FROM aliases a JOIN entities e ON e.name = a.canonical "
+        "WHERE a.alias=? "
+        "GROUP BY e.name, a.via",
+        (q,),
+    ).fetchall()
+    for name, n, via in rows:
+        best = candidates.get(name)
+        if best is None or _VIA_RANK.get(via, 99) < _VIA_RANK[best[1]]:
+            # preserve the highest ku count seen for this canonical
+            existing_n = candidates[name][0] if best else 0
+            candidates[name] = (max(n, existing_n), via)
+        elif best is not None:
+            # same or worse via — keep count updated
+            candidates[name] = (max(n, best[0]), best[1])
+
+    # Also handle curated aliases whose canonical is NOT in entities (glossary tier)
+    # — fetch just from aliases table without the entities join.
+    # We want to surface these too; ku count = 0 (no entity bridge hits).
+    rows_curated = con.execute(
+        "SELECT canonical, via FROM aliases WHERE alias=?", (q,)
+    ).fetchall()
+    for canonical, via in rows_curated:
+        if canonical not in candidates:
+            candidates[canonical] = (0, via)
+
+    if not candidates:
+        return []
+
+    # Sort: primary = ku_count descending, secondary = via rank ascending,
+    # tertiary = name for stable ordering.
+    def _sort_key(item):
+        name, (n, via) = item
+        return (-n, _VIA_RANK.get(via, 99), name)
+
+    ranked = sorted(candidates.items(), key=_sort_key)
+    return [{"name": name, "kus": n, "via": via}
+            for name, (n, via) in ranked[:limit]]
+
+
 def search(con, text, k=10, source=None, lib=None) -> list:
     """Full-text search over KU title/entities/body, ranked by BM25.
 
