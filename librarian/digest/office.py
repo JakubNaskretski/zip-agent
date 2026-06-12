@@ -43,6 +43,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from ..schema import KnowledgeUnit
+from ._progress import done as _done
 from ._progress import extract_in_chunks as _extract_in_chunks
 from ._progress import tick as _tick
 
@@ -163,8 +164,9 @@ def parse_office(docs_dir, progress=None) -> OfficeDigest:
     ``errors``/``skipped`` — surfaced, not dropped; files no office extractor
     handles are simply not documents.
 
-    ``progress`` (callable, e.g. ``print``): one-line count every 200 files —
-    the extraction loop dominates a big-upload digest (MASTER_PROMPT §4)."""
+    ``progress`` (callable, e.g. ``print``): one-line count every ``EVERY``
+    files (default 1000) — the extraction loop dominates a big-upload digest
+    (MASTER_PROMPT §4)."""
     root = Path(docs_dir)
     builder = (_GraphBuilder().register(*_office_extractors())
                .register_resolver(*_gb_default_resolvers()))
@@ -236,17 +238,25 @@ def to_kus(d: OfficeDigest):
     ), _gb_persistence.to_json(d.graph, redact_text=True)
 
 
-def ingest_office(lib, docs_dir, author, rationale, progress=None):
+def ingest_office(lib, docs_dir, author, rationale, progress=None, *, dg=None):
     """Parse a directory of office documents and commit it through the
     Librarian. Returns ``(Report, OfficeDigest)``. Re-ingesting unchanged
     documents is a no-op (I9 — the file bytes' content hash drives it).
-    ``progress=print`` narrates every 200 files/KUs (MASTER_PROMPT §4)."""
-    d = parse_office(docs_dir, progress=progress)
+    ``progress=print`` narrates every ``EVERY`` files/KUs (MASTER_PROMPT §4).
+
+    ``dg`` (keyword-only): pass a pre-parsed :class:`OfficeDigest` from a
+    preceding ``parse_office()`` call to skip the re-parse. ``docs_dir`` is
+    still required by the signature but is unused for parsing when ``dg``
+    is given."""
+    if dg is None:
+        dg = parse_office(docs_dir, progress=progress)
     txn = lib.begin(author, rationale)
-    for staged, (ku, body) in enumerate(to_kus(d), 1):
+    staged = 0
+    for staged, (ku, body) in enumerate(to_kus(dg), 1):
         txn.ingest_ku(ku, body=body)
         _tick(progress, "office ingest", staged)
-    return txn.commit(), d
+    _done(progress, "office ingest", staged)
+    return txn.commit(), dg
 
 
 # --------------------------------------------------------------------------- #
