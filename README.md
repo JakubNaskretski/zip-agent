@@ -42,18 +42,19 @@ python3.11 -m venv .venv
 
 ## Using it — end to end
 
-Everything below assumes a clone of this repo and Python ≥ 3.11 locally; the
-agent side only needs a code-interpreter sandbox that can run Python and keep
-one file (`memory.zip`) between sessions.
+Everything below assumes a clone of this repo and a stock `python3` (3.9+ is
+enough for building the ZIP and running the collectors — no install, no venv;
+the dev test suite targets 3.11+). The agent side only needs a code-interpreter
+sandbox that can run Python and keep one file (`memory.zip`) between sessions.
 
 ### 1. Build the deployable ZIP
 
 ```bash
-python scripts/build_memory.py memory.zip
+python3 scripts/build_memory.py memory.zip
 # optional but recommended — bundle the tree-sitter wheels so the Apex parser
 # auto-upgrades from regex to AST inside the sandbox (match the sandbox's
 # platform/python; the exact pip-download command is in the script's docstring):
-python scripts/build_memory.py --wheelhouse /path/to/wheels memory.zip
+python3 scripts/build_memory.py --wheelhouse /path/to/wheels memory.zip
 ```
 
 ### 2. Set up the agent
@@ -93,10 +94,10 @@ this repo's `vendor/graphbuilder/`); with the PAT in an env var — never a flag
 
 ```bash
 export JIRA_TOKEN=...          # read-only personal access token, env var ONLY
-python -c "from graphbuilder.jira.collect import collect; \
+python3 -c "from graphbuilder.jira.collect import collect; \
            print(collect('https://jira.example.internal', ['PROJ'], 'jira-dump'))"
 export CONFLUENCE_TOKEN=...
-python -c "from graphbuilder.confluence.collect import collect; \
+python3 -c "from graphbuilder.confluence.collect import collect; \
            print(collect('https://wiki.example.internal', ['SPACE'], 'confluence-dump'))"
 ```
 

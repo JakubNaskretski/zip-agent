@@ -17,6 +17,11 @@ import shutil
 import tempfile
 from pathlib import Path
 
+import sys
+
+# allow running straight from a checkout/unpack — no install needed
+sys.path.insert(0, str(__import__('pathlib').Path(__file__).resolve().parents[1]))
+
 from librarian.store import pack_zip
 
 REPO = Path(__file__).resolve().parent.parent
