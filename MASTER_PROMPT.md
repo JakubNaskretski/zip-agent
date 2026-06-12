@@ -153,7 +153,7 @@ print(rep)
 
 **Step 4 — VERIFY**:
 ```python
-print(session.stats())   # counts by source + last changelog entry
+print(session.stats())   # KU counts by source/tier/kind/status + generation
 ```
 
 **Step 5 — EXPORT** (only on user request; the ONLY statement in its execution):
