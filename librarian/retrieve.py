@@ -12,7 +12,7 @@ Usage:
     con = retrieve.open_index(lib)
     retrieve.find_entity(con, "AccountUpdater")     # -> KUs mentioning it (any source)
     retrieve.cross_source(con, "MeterPointService") # -> {source: [ku_id, ...]}
-    retrieve.search(con, "bulk import retry")       # -> ranked KUs w/ snippets
+    retrieve.search(con, "bulk import retry", lib=lib)  # ranked KUs w/ snippets
 """
 from __future__ import annotations
 
@@ -63,19 +63,42 @@ def _fts_query(text) -> str:
     return " OR ".join(f'"{t}"' for t in toks)
 
 
-def search(con, text, k=10, source=None) -> list:
-    """Full-text search over KU title/entities/body, ranked by BM25."""
+def _excerpt(lib, path, terms, width=90) -> str:
+    """Match-positioned excerpt read from the KU's own kb/ file — the index is
+    contentless (postings only), so snippets come from the source of truth."""
+    try:
+        body = lib.store.read(path).decode("utf-8", "replace")
+    except (OSError, FileNotFoundError):
+        return ""
+    low = body.lower()
+    pos = min((p for p in (low.find(t.lower()) for t in terms) if p >= 0),
+              default=-1)
+    if pos < 0:
+        return body[:width].strip()
+    start = max(0, pos - width // 2)
+    return ("…" if start else "") + body[start:start + width].strip() + "…"
+
+
+def search(con, text, k=10, source=None, lib=None) -> list:
+    """Full-text search over KU title/entities/body, ranked by BM25.
+
+    Pass ``lib`` to get match-positioned ``snippet`` strings (read from the KU
+    bodies on demand); without it, results carry titles only — the index is
+    contentless and stores no text to quote."""
     q = _fts_query(text)
     if not q:
         return []
-    sql = ("SELECT ku_id, source, title, snippet(docs, 4, '[', ']', '…', 10), bm25(docs) "
-           "FROM docs WHERE docs MATCH ?")
+    sql = ("SELECT m.ku_id, m.source, m.title, m.path, bm25(docs) "
+           "FROM docs JOIN docmap m ON m.rowid = docs.rowid WHERE docs MATCH ?")
     args = [q]
     if source:
-        sql += " AND source = ?"
+        sql += " AND m.source = ?"
         args.append(source)
     sql += " ORDER BY bm25(docs) LIMIT ?"
     args.append(k)
     rows = con.execute(sql, args).fetchall()
-    return [{"ku_id": r[0], "source": r[1], "title": r[2], "snippet": r[3], "score": r[4]}
+    terms = _TOK.findall(text or "")
+    return [{"ku_id": r[0], "source": r[1], "title": r[2],
+             "snippet": _excerpt(lib, r[3], terms) if lib is not None else "",
+             "score": r[4]}
             for r in rows]

@@ -63,8 +63,13 @@ def build_index(lib):
     con = sqlite3.connect(":memory:")
     con.execute("CREATE TABLE entities(name TEXT, name_norm TEXT, ku_id TEXT, source TEXT, kind TEXT)")
     con.execute("CREATE INDEX ix_ent ON entities(name_norm)")
+    # contentless FTS: postings only — bodies already live as kb/ files, and a
+    # stored copy roughly tripled the index (observed 40 MB on a 7k-KU org).
+    # docmap carries the rowid -> KU identity that contentless tables can't.
     con.execute("CREATE VIRTUAL TABLE docs USING fts5("
-                "ku_id UNINDEXED, source UNINDEXED, title, entities, body, tokenize='unicode61')")
+                "title, entities, body, content='', tokenize='unicode61')")
+    con.execute("CREATE TABLE docmap(rowid INTEGER PRIMARY KEY, ku_id TEXT, "
+                "source TEXT, title TEXT, path TEXT)")
     sig = []
     for ku in sorted(lib.manifest.all(), key=lambda k: k.id):
         if ku.status != "active" or ku.id == INDEX_ID:
@@ -75,11 +80,18 @@ def build_index(lib):
                         (ent, ent.lower(), ku.id, ku.source, ku.kind))
         if ku.kind not in _FTS_SKIP_KINDS:
             try:
-                body = lib.store.read(ku.path).decode("utf-8", "replace")[:_BODY_CAP]
+                raw = lib.store.read(ku.path)
             except (OSError, FileNotFoundError):
-                body = ""
-            con.execute("INSERT INTO docs VALUES(?,?,?,?,?)",
-                        (ku.id, ku.source, ku.title, " ".join(ents), body))
+                raw = b""
+            if b"\x00" in raw[:4096]:
+                raw = b""   # binary body (original docx/xlsx/pdf bytes) — its
+                            # text sidecar KU is the search surface, not junk tokens
+            body = raw.decode("utf-8", "replace")[:_BODY_CAP]
+            if body or ents or ku.title:
+                cur = con.execute("INSERT INTO docs(title, entities, body) VALUES(?,?,?)",
+                                  (ku.title, " ".join(ents), body))
+                con.execute("INSERT INTO docmap VALUES(?,?,?,?,?)",
+                            (cur.lastrowid, ku.id, ku.source, ku.title, ku.path))
         sig.append([ku.id, sorted(ents), ku.content_hash])
     con.commit()
     data = _serialize(con)

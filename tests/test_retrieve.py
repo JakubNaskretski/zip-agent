@@ -63,11 +63,14 @@ def test_fts_search_ranks_and_snippets(tmp_path):
     rebuild_indexes(lib, "dev", "build index")
     con = retrieve.open_index(lib)
 
-    res = retrieve.search(con, "bulk import retry")
+    res = retrieve.search(con, "bulk import retry", lib=lib)
     assert res, "expected FTS hits"
     ids = {r["ku_id"] for r in res}
     assert "jira:PROJ-1" in ids
-    assert any("[" in r["snippet"] for r in res)         # snippet markers present
+    # snippets are match-positioned excerpts read from the KU bodies on demand
+    assert any("retry" in r["snippet"].lower() for r in res)
+    # without lib the contentless index has no text to quote
+    assert all(r["snippet"] == "" for r in retrieve.search(con, "bulk import retry"))
 
     # source filter
     only_sf = retrieve.search(con, "bulk import", source="salesforce")
