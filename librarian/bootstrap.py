@@ -39,13 +39,27 @@ from .store import Store, pack_zip, unpack_zip
 
 
 class Session:
-    """A live agent session bound to a working dir and (optionally) a retained ZIP."""
+    """A live agent session bound to a working dir and (optionally) a retained ZIP.
 
-    def __init__(self, store: Store, librarian: Librarian, memory_zip=None, autosave=True):
+    ``checkpoint_every`` trades checkpoint cost against durability granularity:
+
+    * ``1`` (the default) — re-pack the ZIP after EVERY commit that changed
+      memory. Per-commit durability; I12 semantics unchanged.
+    * ``N > 1`` — re-pack only every Nth *changed* commit (I9 no-op commits do
+      not count). For slow sandboxes where each pack risks the execution time
+      limit. The trailing commits live only in the working dir until the next
+      pack — so when a multi-commit task finishes, ALWAYS call
+      :meth:`checkpoint` explicitly as the final flush.
+    """
+
+    def __init__(self, store: Store, librarian: Librarian, memory_zip=None, autosave=True,
+                 checkpoint_every=1):
         self.store = store
         self.librarian = librarian
         self.memory_zip = Path(memory_zip) if memory_zip else None
         self.autosave = autosave
+        self.checkpoint_every = max(1, int(checkpoint_every))
+        self._changed_commits = 0   # changed commits since the last pack
         self.last_checkpoint_generation = None
         self.wheelhouse = None   # boot() fills in the offline-install report
         if autosave and self.memory_zip is not None:
@@ -64,15 +78,22 @@ class Session:
     # ---- persistence ----
     def _after_commit(self, rep):
         # only re-pack when the commit actually changed memory (skip I9 no-ops)
-        if rep.changes:
+        if not rep.changes:
+            return
+        self._changed_commits += 1
+        if self._changed_commits >= self.checkpoint_every:
             self.checkpoint()
 
     def checkpoint(self, reason=None):
-        """Atomically re-pack the working dir into the retained memory ZIP (I12)."""
+        """Atomically re-pack the working dir into the retained memory ZIP (I12).
+
+        Also the explicit final flush when ``checkpoint_every > 1`` — call it
+        once at the end of any multi-commit task."""
         if self.memory_zip is None:
             return None
         path = pack_zip(self.store.root, self.memory_zip)
         self.last_checkpoint_generation = self.librarian.manifest.generation
+        self._changed_commits = 0
         return path
 
     def export(self, dest):
@@ -116,13 +137,18 @@ def _install_wheelhouse(work_dir) -> dict:
             "reason": ((first.stderr or first.stdout or "").strip())[-400:]}
 
 
-def boot(memory_zip, work_dir=None, install_wheelhouse=True, autosave=True) -> Session:
+def boot(memory_zip, work_dir=None, install_wheelhouse=True, autosave=True,
+         checkpoint_every=1) -> Session:
     """Open the retained memory ZIP and return a ready :class:`Session`.
 
     If ``memory_zip`` does not exist yet (a brand-new agent), an empty working
     dir is created and the first :meth:`Session.checkpoint` writes the ZIP.
     An already-unpacked ``work_dir`` is reused — unless the ZIP is newer (a
     fresh upload), in which case the stale unpack is discarded and replaced.
+
+    ``checkpoint_every`` is passed through to :class:`Session` (default 1 =
+    pack after every changed commit; N>1 batches packs — final flush via
+    :meth:`Session.checkpoint`).
     """
     memory_zip = Path(memory_zip)
     if work_dir is None:
@@ -151,6 +177,7 @@ def boot(memory_zip, work_dir=None, install_wheelhouse=True, autosave=True) -> S
         sys.path.insert(0, str(work_dir))
 
     report = _install_wheelhouse(work_dir) if install_wheelhouse else None
-    session = Session(store, Librarian(store), memory_zip=memory_zip, autosave=autosave)
+    session = Session(store, Librarian(store), memory_zip=memory_zip, autosave=autosave,
+                      checkpoint_every=checkpoint_every)
     session.wheelhouse = report   # surfaced so the boot report can say WHY
     return session

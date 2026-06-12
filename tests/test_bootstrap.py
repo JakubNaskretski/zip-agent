@@ -36,6 +36,39 @@ def test_noop_commit_does_not_recheckpoint(tmp_path):
     assert s.last_checkpoint_generation == gen     # no re-pack on a no-op
 
 
+def test_checkpoint_every_batches_packs_and_flushes_explicitly(tmp_path):
+    """checkpoint_every=N packs only every Nth CHANGED commit; the explicit
+    checkpoint() is the final flush for the trailing commits."""
+    memzip = tmp_path / "memory.zip"
+    s = boot(memzip, work_dir=tmp_path / "w", install_wheelhouse=False,
+             checkpoint_every=3)
+    s.begin("dev", "ingest issue one").add_ku(jira_ku(1), body="a").commit()
+    s.begin("dev", "ingest issue two").add_ku(jira_ku(2), body="b").commit()
+    assert not memzip.exists()                     # batched — not packed yet
+    s.begin("dev", "ingest issue three").add_ku(jira_ku(3), body="c").commit()
+    assert memzip.exists()                         # 3rd changed commit packs
+    assert s.last_checkpoint_generation == 3
+
+    # a no-op commit (I9) never advances the batch counter
+    s.begin("dev", "re-ingest identical content").ingest_ku(jira_ku(3), body="c").commit()
+    s.begin("dev", "ingest issue four").add_ku(jira_ku(4), body="d").commit()
+    assert s.last_checkpoint_generation == 3       # 4th changed commit pending
+    assert boot(memzip, work_dir=tmp_path / "peek", install_wheelhouse=False,
+                autosave=False).stats()["total"] == 3
+
+    s.checkpoint()                                 # the explicit final flush
+    assert s.last_checkpoint_generation == 4
+    assert boot(memzip, work_dir=tmp_path / "peek2", install_wheelhouse=False,
+                autosave=False).stats()["total"] == 4
+
+
+def test_checkpoint_every_default_keeps_per_commit_durability(tmp_path):
+    memzip = tmp_path / "memory.zip"
+    s = boot(memzip, work_dir=tmp_path / "w", install_wheelhouse=False)
+    s.begin("dev", "ingest issue one").add_ku(jira_ku(1), body="a").commit()
+    assert s.last_checkpoint_generation == 1       # packed immediately (default)
+
+
 def test_export_is_independent_of_autosave(tmp_path):
     memzip = tmp_path / "memory.zip"
     s = boot(memzip, work_dir=tmp_path / "w")
