@@ -18,7 +18,7 @@ tree-sitter binding generations via its compatibility shim.
 | | |
 |---|---|
 | Source | `graph-builder` (private sibling repo) |
-| Pinned commit | `c3e7391` (engine `main`) |
+| Pinned commit | `d00a3f1` (engine `main`) |
 | Pinned tip | translated display labels (`label_<locale>` attrs via partial donor nodes) + node→source `source_path` traceability, flexipage fields/actions/related-lists/page attrs, Jira envelope incl. releases/sprints/epic, Apex method signatures, Confluence ancestors/timestamps + dual-API tree-sitter shim |
 | Vendored on | 2026-06-12 |
 | Scope | the `graphbuilder/` package only — no tests, no scripts |
