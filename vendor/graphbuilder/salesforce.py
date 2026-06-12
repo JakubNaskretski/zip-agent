@@ -78,8 +78,15 @@ class SFLwc:
 class SFFlexiPage:
     name: str
     sobject: str = ""                                # the object the page is for
+    page_type: str = ""                              # RecordPage/AppPage/HomePage/...
+    template: str = ""                               # <template><name> value
+    master_label: str = ""
     lwc_refs: set = field(default_factory=set)       # custom components it embeds
     components: list = field(default_factory=list)   # all component names (incl standard)
+    field_refs: set = field(default_factory=set)     # bare field names on the page's object
+    qualified_field_refs: set = field(default_factory=set)  # explicit Object.Field refs
+    action_refs: set = field(default_factory=set)    # QuickAction names (file-stem form)
+    related_lists: list = field(default_factory=list)  # related-list API names shown
     source: str = ""
 
 
@@ -251,7 +258,18 @@ _FLEXIPAGE_BUILTIN_NS = frozenset({
     "flexipage", "force", "forcecommunity", "forceknowledge", "lightning",
     "lightningcommunity", "lightningsnapin", "native", "interop", "aura", "ui",
     "siteforce", "sfa", "wave", "cms",
+    # standard list/notes/console/CTI/dashboard components — platform, not LWC
+    "lst", "notes", "console", "opencti", "record_flexipage",
+    "desktopdashboards",
 })
+
+# `<fieldItem>Record.Field</fieldItem>` on a fieldInstance. \w+ admits exactly one
+# segment, so cross-object spans (`Record.Rel__r.Field`, `Record.Account.Name`)
+# never match — see the skip rationale in parse_flexipage.
+_FLEXI_FIELD_ITEM = re.compile(r"Record\.(\w+)")
+# visibility-rule criteria bind as `{!Record.Field}` — same single-segment rule.
+_FLEXI_VIS_FIELD = re.compile(r"\{!\s*Record\.(\w+)\s*\}")
+_QUALIFIED_FIELD = re.compile(r"\w+\.\w+")           # explicit Object.Field value
 
 
 def parse_flexipage(path: Path) -> SFFlexiPage:
@@ -263,6 +281,14 @@ def parse_flexipage(path: Path) -> SFFlexiPage:
     except ET.ParseError:
         return fp
     fp.sobject = _text(root, "sobjectType")
+    # page-level <type> (RecordPage/AppPage/HomePage/...) is a DIRECT child of
+    # the FlexiPage root — regions and item instances carry their own <type>
+    # (Region/Facet/...), which a subtree search would wrongly pick up.
+    fp.page_type = _text(root, "type").strip()
+    fp.master_label = _text(root, "masterLabel").strip()
+    tmpl = _child(root, "template")
+    if tmpl is not None:
+        fp.template = _text(tmpl, "name").strip()
     fp.components = _iter_text(root, "componentName")
     # custom LWC/Aura are referenced as "c:componentName"; managed-package
     # components as "ns:componentName" -> keep the namespace as ns__componentName.
@@ -277,6 +303,70 @@ def parse_flexipage(path: Path) -> SFFlexiPage:
         elif ns not in _FLEXIPAGE_BUILTIN_NS and not ns.startswith("runtime_"):
             refs.add(f"{ns}__{comp}")
     fp.lwc_refs = refs
+
+    # --- fields the page shows: <fieldItem>Record.Field</fieldItem>. Cross-object
+    # spans (`Record.Rel__r.Field`) are skipped entirely: the relationship-name ->
+    # lookup-field mapping needs the schema (relationship names are user-set, not
+    # mechanically derivable from the field name), and tagging the wrong object's
+    # field would be worse than omitting the span. ------------------------------
+    for v in _iter_text(root, "fieldItem"):
+        m = _FLEXI_FIELD_ITEM.fullmatch(v.strip())
+        if m:
+            fp.field_refs.add(m.group(1))
+
+    # --- fields the page's visibility rules read: criteria leftValue
+    # `{!Record.Field}` (on componentInstance and fieldInstance alike). Same
+    # single-segment rule as fieldItem. -----------------------------------------
+    for vr in _iter_local(root, "visibilityRule"):
+        for v in _iter_text(vr, "leftValue"):
+            m = _FLEXI_VIS_FIELD.fullmatch(v.strip())
+            if m:
+                fp.field_refs.add(m.group(1))
+
+    # --- actions: an `actionNames` componentInstanceProperties entry lists the
+    # actions surfaced by a highlights panel or related list. Dotted names
+    # (`Object.Action`) are QuickAction API names in exactly the quickaction
+    # file-stem form; `CustomButton.*` / `StandardButton.*` entries are buttons,
+    # and BARE names are skipped — `Edit`/`Delete`/`New` style standard platform
+    # actions are indistinguishable from global QuickActions by name alone. -----
+    for prop in _iter_local(root, "componentInstanceProperties"):
+        if _text(prop, "name") != "actionNames":
+            continue
+        for v in _iter_text(prop, "value"):
+            v = v.strip()
+            head, sep, _ = v.partition(".")
+            if sep and head not in ("CustomButton", "StandardButton"):
+                fp.action_refs.add(v)
+    # platformActionList items declare their type explicitly, so even bare
+    # (global) QuickAction names are unambiguous here.
+    for item in _iter_local(root, "platformActionListItems"):
+        if _text(item, "actionType") == "QuickAction":
+            an = _text(item, "actionName").strip()
+            if an:
+                fp.action_refs.add(an)
+
+    # --- related lists: any *relatedList* component (force:relatedListContainer,
+    # force:relatedListSingleContainer, lst:dynamicRelatedList, ...). The related
+    # OBJECT is not derivable locally — relatedListApiName is a relationship name,
+    # not an object name — so unqualified column fields (relatedListFieldAliases /
+    # relatedListFieldApiNames) are skipped rather than mis-qualified. What IS
+    # explicit gets captured: the related-list API names (page attr) and any
+    # self-qualified Object.Field property value (parentFieldApiName). -----------
+    related = set()
+    for ci in _iter_local(root, "componentInstance"):
+        comp = _text(ci, "componentName")
+        if "relatedlist" not in comp.lower():
+            continue
+        for prop in _iter_local(ci, "componentInstanceProperties"):
+            pname = _text(prop, "name")
+            v = _text(prop, "value").strip()
+            if not v:
+                continue
+            if pname == "relatedListApiName":
+                related.add(v)
+            elif pname == "parentFieldApiName" and _QUALIFIED_FIELD.fullmatch(v):
+                fp.qualified_field_refs.add(v)
+    fp.related_lists = sorted(related)
     return fp
 
 

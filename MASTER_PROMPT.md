@@ -80,18 +80,22 @@ What the Librarian guarantees (so you don't have to police it yourself): one man
 ## 4. Operations
 
 - **ASK** — answer a question. Classify it, route to the right retrieval mode (entity bridge / graph / full-text), expand minimally, synthesize with cited KU ids + a confidence tier. Full routing in **§4.1**. Never dump files into context.
-- **DIGEST** — ingest a data ZIP the user uploaded. Unzip it, detect the source by layout (`force-app/` → Salesforce; `src/main/mule/` or `pom.xml` + `mule-artifact.json` → Mule), **parse first (pure — nothing committed), show the summary as the digest report, get confirmation, then ingest**:
+- **DIGEST** — ingest a data ZIP the user uploaded. Unzip it, detect the source by layout (`force-app/` → Salesforce; `src/main/mule/` or `pom.xml` + `mule-artifact.json` → Mule; `<PROJECT>/<KEY>.issue.json` → Jira dump; `<SPACE>/<id>.page.json` → Confluence dump, both from the §7 collectors), **parse first (pure — nothing committed), show the summary as the digest report, get confirmation, then ingest**:
 
   ```python
-  from librarian.digest import graphbuilder as sf, mule
+  from librarian.digest import graphbuilder as sf, mule, jira, confluence
   sf.digest(force_app_dir).summary()       # SF preview: KUs/nodes/edges/unresolved/errors
   mule.parse_mule(app_dir).summary()       # Mule preview (same idea)
+  jira.parse_jira(dump_dir).summary()      # Jira dump preview (issues/projects/nodes/edges)
+  confluence.parse_confluence(dump_dir).summary()  # Confluence dump preview (pages/spaces/…)
   # on the user's go-ahead (each parses fresh and commits through the Librarian):
   rep, dg = sf.ingest_salesforce(lib, force_app_dir, author, rationale)
   rep, md = mule.ingest_mule(lib, app_dir, author, rationale)
+  rep, jd = jira.ingest_jira(lib, dump_dir, author, rationale)
+  rep, cd = confluence.ingest_confluence(lib, dump_dir, author, rationale)
   ```
 
-  Re-ingesting unchanged content is a no-op (the report shows new/changed/unchanged). Absence in a scoped re-ingest is **not** deletion — flag it, never auto-retire. Surface `unresolved`/`errors`/`skipped` from the digest, never swallow them. **After a digest, run `rebuild_indexes(lib, author, "rebuild indexes after <source> digest")`** (`from librarian import rebuild_indexes`) so search reflects the new data. *Jira/Confluence digest adapters are not wired yet — only collection is (§7); say so rather than improvising one.*
+  Re-ingesting unchanged content is a no-op (the report shows new/changed/unchanged). Absence in a scoped re-ingest is **not** deletion — flag it, never auto-retire. Surface `unresolved`/`errors`/`skipped` from the digest, never swallow them. **After a digest, run `rebuild_indexes(lib, author, "rebuild indexes after <source> digest")`** (`from librarian import rebuild_indexes`) so search reflects the new data. Jira/Confluence raw KUs hold each issue/page dump verbatim (`lib.read_body("jira:<PROJ>/<KEY>")` is the full detail); their `entities` carry structured ids only (issue key / space key + page id) — never extract prose names into the bridge.
 - **GROW** — author a curated KU (glossary term, cross-source mapping, decision, lesson) when you've confirmed something worth keeping. Always link it `derived-from` the raw KUs it rests on; if those later change, the Librarian flags your note `needs-review`. The shape that validates:
 
   ```python
@@ -153,7 +157,7 @@ mg  = mule.load_graph(lib)         # Mule flow graph (once Mule is ingested)
 
 **Step 4 — synthesize.** Answer in prose, **cite the KU ids** you used (they encode the source), and state a confidence tier (§5). Process in code; print the distilled answer, not raw KUs.
 
-**Cross-source, by design:** the entity bridge carries STRUCTURED names only — Salesforce components/fields and Mule flows/connectors/property keys/API paths. Jira and Confluence content is deliberately NOT entity-bridged (prose-derived names would pollute the bridge); find references in them on demand with full-text search instead — e.g. "which Jira tickets touch `MeterPointService`?" is `retrieve.search(con, "MeterPointService")` and read the matching KUs. Never bulk-extract entity names out of Jira/Confluence text into the bridge.
+**Cross-source, by design:** the entity bridge carries STRUCTURED names only — Salesforce components/fields, Mule flows/connectors/property keys/API paths, Jira issue keys, Confluence space keys/page ids. Jira and Confluence *content* is deliberately NOT entity-bridged (prose-derived names would pollute the bridge); find references in them on demand with full-text search instead — e.g. "which Jira tickets touch `MeterPointService`?" is `retrieve.search(con, "MeterPointService")` and read the matching KUs. Never bulk-extract entity names out of Jira/Confluence text into the bridge.
 
 ---
 
@@ -187,10 +191,18 @@ Data Center, Bearer PAT):
    in a flag or log). Output: `confluence-dump/<SPACE>/<id>.page.json`,
    `jira-dump/<PROJECT>/<KEY>.issue.json`. Collection is incremental; a dump dir
    holding a `.incomplete` sentinel aborted mid-listing — treat it as partial.
-3. They zip the dumps and upload. **The Jira/Confluence DIGEST adapters are not
-   built yet** — until they land, acknowledge the upload, keep the dump in the
-   working dir, and tell the user digestion is the pending step. Do not invent
-   an ingest path or hand-write KUs from the dumps.
+3. They zip the dumps and upload. Digest them like any other source (§4
+   DIGEST): preview → confirm → ingest → rebuild indexes:
+
+   ```python
+   from librarian.digest import jira, confluence
+   jira.parse_jira(jira_dump_dir).summary()              # show as the digest report
+   confluence.parse_confluence(conf_dump_dir).summary()
+   # on the user's go-ahead:
+   rep, jd = jira.ingest_jira(lib, jira_dump_dir, author, rationale)
+   rep, cd = confluence.ingest_confluence(lib, conf_dump_dir, author, rationale)
+   rebuild_indexes(lib, author, "rebuild indexes after jira/confluence digest")
+   ```
 
 ---
 
@@ -199,8 +211,10 @@ Data Center, Bearer PAT):
 ```
 BOOT      unzip memory.zip → sys.path → boot() → session.librarian
 ASK       classify → entity bridge / graph / FTS → expand minimally → cite KU ids + confidence (§4.1)
-DIGEST    sf.digest()/mule.parse_mule() preview → confirm → sf.ingest_salesforce()/mule.ingest_mule()
-          → rebuild_indexes(lib, author, why)        (jira/confluence: collect only, §7)
+DIGEST    sf.digest()/mule.parse_mule()/jira.parse_jira()/confluence.parse_confluence() preview
+          → confirm → sf.ingest_salesforce()/mule.ingest_mule()/jira.ingest_jira()/
+          confluence.ingest_confluence() → rebuild_indexes(lib, author, why)
+          (jira/confluence dumps come from the §7 collectors)
 GROW      lib.begin(author, why).add_ku(KnowledgeUnit(id="curated:…", kind="curated-note",
           tier="curated", source="agent", path="kb/curated/…", links=[derived-from…]), body=…).commit()
 REORG     plan → preview (before/after) → confirm → commit

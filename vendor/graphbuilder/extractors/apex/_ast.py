@@ -13,6 +13,11 @@ symbol table (parameters + ``Type var`` declarations) so an instance call
 ``var.method()`` resolves to ``calls -> apexmethod/<Type>.method``; and SOQL/SOSL
 walked structurally for ``reads -> object``/``field`` with no false positive from
 the word ``from`` in a string.
+
+Method signature attrs (``return_type``/``visibility``/``is_static``/
+``parameters``/``overloads``) and the class ``sharing`` attr match the regex
+backend's shape exactly (same names, same value forms); this backend additionally
+emits ``start_line``/``end_line`` (1-based) on apexmethod nodes.
 """
 from __future__ import annotations
 
@@ -22,12 +27,15 @@ from pathlib import Path
 from ...core import node, raw_edge
 from ...salesforce import _strip_apex
 from ._common import (
+    _ACCESS_MODIFIERS,
     _ASYNC_IFACES,
     _COLLECTION_WRAPPERS,
     _METHOD_ANNOTATIONS,
+    _SHARING_RE,
     _SOQL_FROM_RE,
     _async_iface_name,
     _node_kind_for,
+    _norm_type,
 )
 
 # Method-level annotation allow-list for the AST backend — the shared set plus
@@ -63,6 +71,13 @@ def extract_ast(parser, path: Path):
     cid = f"apexclass/{cname}"
 
     nodes: list[dict] = [node(cid, "apexclass", cname, kind="class")]
+    # class-level sharing modifier, read precisely from the top declaration's
+    # modifiers (annotation children skipped so an annotation argument can't
+    # fake the keyword).
+    if top is not None:
+        sharing = _ast_sharing(top, b)
+        if sharing:
+            nodes[0]["sharing"] = sharing
     edges: list[dict] = []
     async_kinds: list[str] = []
 
@@ -123,8 +138,9 @@ def extract_ast(parser, path: Path):
 
 # ------------------------------------------------------------------ #
 def _ast_index_types(n, b, ctx):
-    """Pre-pass: record each class's method names and whether the file is an
-    @IsTest class, so the body walk can resolve self-calls and emit `tests`."""
+    """Pre-pass: record each class's method names (and per-name declaration
+    counts, for the `overloads` attr) and whether the file is an @IsTest class,
+    so the body walk can resolve self-calls and emit `tests`."""
     if n.kind() in ("class_declaration", "interface_declaration"):
         enclosing = _field_text(n, "name", b) or ""
         anns = _ast_annotations(n, b)
@@ -140,6 +156,8 @@ def _ast_index_types(n, b, ctx):
                     mn = _field_text(ch, "name", b)
                     if mn:
                         bucket.add(mn)
+                        key = (enclosing, mn)
+                        ctx.method_counts[key] = ctx.method_counts.get(key, 0) + 1
     for i in range(n.child_count()):
         _ast_index_types(n.child(i), b, ctx)
 
@@ -217,9 +235,48 @@ def _ast_method(m, cid, top_name, enclosing, b, nodes, edges,
 
     anns = _ast_annotations(m, b)
     keep = sorted(a for a in anns if a in _AST_METHOD_ANNOTATIONS)
+
+    # symbol table: params + locals -> var name -> sObject/class type. The same
+    # formal_parameter nodes also yield the node's `parameters` attr precisely
+    # (type text as written, whitespace-normalised) — same shape as the regex
+    # backend's best-effort parse.
+    symbols: dict[str, str] = {}
+    parameters: list[dict] = []
+    params = _named_child_of_kind(m, ("formal_parameters",))
+    if params is not None:
+        for i in range(params.child_count()):
+            p = params.child(i)
+            if p.kind() == "formal_parameter":
+                pname = _field_text(p, "name", b)
+                ptype = _ast_type_name(p.child_by_field_name("type"), b)
+                if pname and ptype:
+                    symbols[pname] = ptype
+                raw_type = _norm_type(_field_text(p, "type", b))
+                if pname and raw_type:
+                    parameters.append({"type": raw_type, "name": pname})
+
     mnode = node(mid, "apexmethod", f"{enclosing}.{mname}")
     if keep:
         mnode["annotations"] = keep
+    # signature detail (first declaration wins for overloads — the second
+    # declaration's mnode below is discarded by the only-add-once gate).
+    rtype = _norm_type(_field_text(m, "type", b))
+    if rtype:
+        mnode["return_type"] = rtype
+    visibility, is_static = _ast_vis_static(m, b)
+    if visibility:
+        mnode["visibility"] = visibility
+    if is_static:
+        mnode["is_static"] = True
+    if parameters:
+        mnode["parameters"] = parameters
+    n_decls = ctx.method_counts.get((enclosing, mname), 1)
+    if n_decls > 1:
+        mnode["overloads"] = n_decls
+    # 1-based source lines of the declaration (modifiers/annotations included),
+    # derived from byte offsets so no extra parser API is needed.
+    mnode["start_line"] = b.count(b"\n", 0, m.start_byte()) + 1
+    mnode["end_line"] = b.count(b"\n", 0, m.end_byte()) + 1
     # overloads collapse to one node id: only add the node once.
     if not any(x["id"] == mid for x in nodes):
         nodes.append(mnode)
@@ -230,18 +287,6 @@ def _ast_method(m, cid, top_name, enclosing, b, nodes, edges,
     if "future" in anns:
         async_kinds.append("future")
         edges.append(raw_edge(mid, "async", "apexclass", "System.Future"))
-
-    # symbol table: params + locals -> var name -> sObject/class type.
-    symbols: dict[str, str] = {}
-    params = _named_child_of_kind(m, ("formal_parameters",))
-    if params is not None:
-        for i in range(params.child_count()):
-            p = params.child(i)
-            if p.kind() == "formal_parameter":
-                pname = _field_text(p, "name", b)
-                ptype = _ast_type_name(p.child_by_field_name("type"), b)
-                if pname and ptype:
-                    symbols[pname] = ptype
 
     body = m.child_by_field_name("body") or _named_child_of_kind(m, ("block",))
     if body is None:
@@ -543,6 +588,8 @@ class _AstCtx:
       edges (attributed to the top class id, mirroring the regex backend),
     - ``method_names_by_class`` lets a bare/`this.` call resolve to an intra-class
       method node,
+    - ``method_counts`` maps ``(class, method)`` -> number of declarations seen,
+      so an overloaded method's single node can carry ``overloads: N``,
     - ``is_test_class`` / ``tested_classes`` drive the ``tests`` edge for @IsTest.
     """
 
@@ -552,6 +599,7 @@ class _AstCtx:
         self.qualified_calls: set[tuple[str, str]] = set()
         self.object_refs: set[str] = set()
         self.method_names_by_class: dict[str, set[str]] = {}
+        self.method_counts: dict[tuple[str, str], int] = {}
         self.is_test_class: bool = False
         self.tested_classes: set[str] = set()
 
@@ -681,6 +729,34 @@ def _ast_annotations(decl, b: bytes) -> set[str]:
             if nm:
                 out.add(nm.lower())
     return out
+
+
+def _modifier_text(decl, b: bytes) -> str:
+    """The declaration's keyword modifiers as one lowercased string. Annotation
+    children are skipped so an annotation argument can never fake a keyword."""
+    mods = _named_child_of_kind(decl, ("modifiers",))
+    if mods is None:
+        return ""
+    return " ".join(
+        _text(mods.child(i), b)
+        for i in range(mods.child_count())
+        if mods.child(i).kind() not in ("annotation", "marker_annotation")
+    ).lower()
+
+
+def _ast_vis_static(decl, b: bytes) -> tuple[str, bool]:
+    """(visibility, is_static) for a method declaration, read from its
+    modifiers: visibility is the stated access modifier ('' when unstated)."""
+    words = _modifier_text(decl, b).split()
+    visibility = next((w for w in words if w in _ACCESS_MODIFIERS), "")
+    return visibility, "static" in words
+
+
+def _ast_sharing(cls_node, b: bytes) -> str:
+    """The class's sharing modifier — "with"/"without"/"inherited" — or '' when
+    unstated (the grammar keeps e.g. `without sharing` as one modifier node)."""
+    m = _SHARING_RE.search(_modifier_text(cls_node, b))
+    return m.group(1).lower() if m else ""
 
 
 # sObject/custom-metadata suffixes — these are OBJECTS, never apex classes.

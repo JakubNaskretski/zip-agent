@@ -32,6 +32,10 @@ NODE_TYPES = {
     # ---- Jira source (a third, SEPARATE graph; see graphbuilder/jira) ----
     # Same content-capture exception: issue nodes carry the description text inline.
     "jiraproject", "jiraissue", "jirauser", "jiralabel",
+    # Issue-envelope structure (names only, like labels): releases (fixVersions),
+    # sprints, project components. Epics are plain jiraissue nodes (reached via
+    # child-of), not a separate kind.
+    "jiraversion", "jirasprint", "jiracomponent",
     # ---- MuleSoft source (a fourth, SEPARATE graph; see graphbuilder/mulesoft +
     # extractors/mule). Structural names only (no content capture) — a static
     # src/main/mule XML tree, parsed like a force-app with no remote collect.
@@ -60,6 +64,11 @@ EDGE_TYPES = {
     # cross-source join; never emitted by a build) ----
     "child-of", "links-to", "attaches", "labeled", "mentions", "authored-by",
     "assigned-to", "documents",
+    # ---- Jira issue envelope: issue -fixed-in-> jiraversion (release) ·
+    # -in-sprint-> jirasprint · -component-of-> jiracomponent. Epic membership
+    # reuses `child-of` (issue -child-of-> epic issue), consistent with
+    # subtask->parent — an issue may be child-of BOTH its project and its epic. ----
+    "fixed-in", "in-sprint", "component-of",
     # ---- MuleSoft Phase-3 taxonomy (`reads`, `implements` and `contains` are
     # reused from the shared vocabulary above): APIkit routing (router->flow /
     # config->spec / spec->resource), source triggers (flow->listener|source),

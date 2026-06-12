@@ -13,13 +13,17 @@ from pathlib import Path
 from ...core import node, raw_edge
 from ...salesforce import _strip_apex, parse_apex
 from ._common import (
+    _ACCESS_MODIFIERS,
     _ASYNC_IFACES,
     _COLLECTION_WRAPPERS,
     _METHOD_ANNOTATIONS,
+    _SHARING_RE,
     _SOQL_FROM_RE,
     _STRING_LIT_RE,
     _async_iface_name,
     _node_kind_for,
+    _norm_type,
+    _parse_params,
     _strip_string_literals,
 )
 
@@ -38,7 +42,7 @@ _METHOD_RE = re.compile(
     # not span whitespace/newlines: with optional modifiers a greedy ret would
     # otherwise swallow annotations + modifiers across lines and mis-split.
     r"(?P<ret>[A-Za-z_][\w.]*(?:<[^{}();]*>)?(?:\[\s*\])?)\s+"
-    r"(?P<name>\w+)\s*\([^)]*\)\s*(?P<body>\{|;)",
+    r"(?P<name>\w+)\s*\((?P<params>[^)]*)\)\s*(?P<body>\{|;)",
     re.I,
 )
 
@@ -323,11 +327,39 @@ def _deep_reads_writes_async(mid, body, edges, async_kinds) -> None:
             edges.append(raw_edge(mid, "async", "apexclass", target))
 
 
+def _signature_attrs(m) -> dict:
+    """Signature-detail node attrs for one ``_METHOD_RE`` match (empty values
+    omitted): ``return_type`` (as written, whitespace-normalised),
+    ``visibility``, ``is_static`` (present only when static) and ``parameters``
+    (best-effort — see :func:`_parse_params`).
+
+    Constructors match with the access modifier in the ``ret`` slot
+    (``public AcmeCalc(...)`` -> modifiers empty, ret=``public``), so a
+    modifier-valued ``ret`` means: visibility from ``ret``, no return_type."""
+    attrs: dict = {}
+    ret_raw = (m.group("ret") or "").strip()
+    if ret_raw.lower() in _ACCESS_MODIFIERS:           # constructor shape
+        attrs["visibility"] = ret_raw.lower()
+    else:
+        if ret_raw:
+            attrs["return_type"] = _norm_type(ret_raw)
+        mods = (m.group("modifiers") or "").lower().split()
+        vis = next((w for w in mods if w in _ACCESS_MODIFIERS), "")
+        if vis:
+            attrs["visibility"] = vis
+        if "static" in mods:
+            attrs["is_static"] = True
+    params = _parse_params(m.group("params"))
+    if params:
+        attrs["parameters"] = params
+    return attrs
+
+
 def _deep(src, cname, cid, nodes, edges, async_kinds) -> set[str]:
     """Emit apexmethod nodes, contains edges, intra-class calls, annotations,
     per-method reads/writes, and @future async. Returns the set of method names
     defined on this class (used to detect self-calls)."""
-    methods: dict[str, dict] = {}     # name -> {annotations, body, start, end}
+    methods: dict[str, dict] = {}     # name -> {annotations, body, sig, count}
 
     for m in _METHOD_RE.finditer(src):
         name = m.group("name")
@@ -341,18 +373,30 @@ def _deep(src, cname, cid, nodes, edges, async_kinds) -> set[str]:
             body, _ = _balanced_body(src, m.end() - 1)
         else:
             body = ""
-        # overloads collapse onto one node: merge annotations + bodies
-        entry = methods.setdefault(name, {"annotations": set(), "body": ""})
+        # overloads collapse onto one node: merge annotations + bodies (edge
+        # behaviour); signature attrs are first-declaration-wins, with the
+        # declaration count surfacing as `overloads` when >1.
+        entry = methods.setdefault(name, {"annotations": set(), "body": "",
+                                          "sig": None, "count": 0})
         entry["annotations"] |= anns
         entry["body"] += "\n" + body
+        entry["count"] += 1
+        if entry["sig"] is None:
+            try:
+                entry["sig"] = _signature_attrs(m)
+            except Exception:
+                entry["sig"] = {}
 
     for name, info in methods.items():
         mid = f"apexmethod/{cname}.{name}"
         anns = sorted(a for a in info["annotations"]
                       if a in _METHOD_ANNOTATIONS)
         mnode = node(mid, "apexmethod", f"{cname}.{name}")
+        mnode.update(info["sig"] or {})
         if anns:
             mnode["annotations"] = anns
+        if info["count"] > 1:
+            mnode["overloads"] = info["count"]
         nodes.append(mnode)
         edges.append(raw_edge(cid, "contains", "apexmethod", f"{cname}.{name}"))
 
@@ -426,6 +470,12 @@ def extract_regex(path: Path):
             async_kinds.append(_ASYNC_IFACES[short])
 
     cnode_attrs = {}
+    # class-level sharing modifier (`with|without|inherited sharing`), read from
+    # the declaration header — everything before the class body's first `{`, so
+    # an inner class's sharing modifier can never leak onto the top class.
+    sm = _SHARING_RE.search(src.split("{", 1)[0])
+    if sm:
+        cnode_attrs["sharing"] = sm.group(1).lower()
     # `kind` reflects the async interface the class implements. Derived from the
     # generic-safe async detection (async_kinds is implements-only here;
     # @future/call-site kinds are appended later in `_deep`), so generic

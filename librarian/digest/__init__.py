@@ -8,4 +8,9 @@ docs/ARCHITECTURE.md §6.
   graph-builder engine (``vendor/graphbuilder/``). Vocabulary mapping +
   reconciliation notes live in the ``graphbuilder`` module docstring.
 - ``mule`` — Mule flow-graph digest.
+- ``jira`` — Jira collector-dump digest (``<PROJECT>/<KEY>.issue.json`` →
+  raw issue KUs + a contained intra-Jira graph; entities = issue keys only).
+- ``confluence`` — Confluence collector-dump digest (``<SPACE>/<id>.page.json``
+  → raw page KUs + a contained intra-Confluence graph; entities = space key +
+  page id only).
 """
