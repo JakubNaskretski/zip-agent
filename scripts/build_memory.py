@@ -67,7 +67,17 @@ def build(dest="memory.zip", seed_dir=None, wheelhouse=None) -> Path:
         wh = Path(wheelhouse)
         wheels = sorted(wh.glob("*.whl")) if wh.is_dir() else []
         if not wheels:
-            raise SystemExit(f"--wheelhouse {wheelhouse}: no *.whl files found")
+            raise SystemExit(
+                f"--wheelhouse {wheelhouse}: no *.whl files found.\n"
+                "Download the AST-backend wheels into it first (match the "
+                "SANDBOX's platform/Python, not this machine's), e.g. for a "
+                "linux x86_64 / Python 3.12 sandbox:\n\n"
+                f"  python3 -m pip download --only-binary :all: "
+                "--platform manylinux2014_x86_64 \\\n"
+                f"      --python-version 312 -d {wheelhouse} \\\n"
+                "      \"tree-sitter>=0.21,<1\" \"tree-sitter-language-pack>=0.1,<2\"\n\n"
+                "Or build WITHOUT --wheelhouse — the agent then uses the "
+                "always-on regex Apex backend.")
         dest_wh = staging / "reference" / "wheelhouse"
         dest_wh.mkdir(parents=True)
         for w in wheels:

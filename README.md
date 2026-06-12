@@ -51,11 +51,21 @@ sandbox that can run Python and keep one file (`memory.zip`) between sessions.
 
 ```bash
 python3 scripts/build_memory.py memory.zip
-# optional but recommended — bundle the tree-sitter wheels so the Apex parser
-# auto-upgrades from regex to AST inside the sandbox (match the sandbox's
-# platform/python; the exact pip-download command is in the script's docstring):
-python3 scripts/build_memory.py --wheelhouse /path/to/wheels memory.zip
 ```
+
+Optionally bundle the tree-sitter wheels so the Apex parser auto-upgrades from
+regex to AST inside the sandbox. Two steps — download wheels matching the
+**sandbox's** platform/Python (not your machine's), then build with them:
+
+```bash
+python3 -m pip download --only-binary :all: --platform manylinux2014_x86_64 \
+    --python-version 312 -d wheelhouse/ \
+    "tree-sitter>=0.21,<1" "tree-sitter-language-pack>=0.1,<2"
+python3 scripts/build_memory.py --wheelhouse wheelhouse/ memory.zip
+```
+
+Skip this if unsure — without it the agent simply uses the always-on regex
+Apex backend; wrong-platform wheels also degrade to that, harmlessly.
 
 ### 2. Set up the agent
 
