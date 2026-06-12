@@ -8,7 +8,7 @@ NOTE: the master prompt (``MASTER_PROMPT.md``) is deliberately NOT bundled — i
 is pasted into the agent builder's instructions field, so it is a *separate*
 deliverable that lives outside the ZIP.
 
-    python scripts/build_memory.py [out.zip] [--seed DIR]
+    python scripts/build_memory.py [out.zip] [--seed DIR] [--wheelhouse DIR]
 """
 from __future__ import annotations
 
@@ -22,8 +22,23 @@ from librarian.store import pack_zip
 REPO = Path(__file__).resolve().parent.parent
 _IGNORE = shutil.ignore_patterns("__pycache__", "*.pyc", "*.pyo", "*.tmp")
 
+# What --wheelhouse is FOR: the optional tree-sitter AST Apex backend. The
+# vendored engine runs stdlib-only (regex backend) by default; bundling the two
+# wheels below lets bootstrap.boot() pip-install them offline in the sandbox,
+# and the engine's runtime probe then upgrades Apex parsing automatically
+# (constructor refs, instance-call resolution). Download wheels matching the
+# SANDBOX's platform/Python — e.g. for a linux x86_64 / Python 3.12 host:
+#
+#   pip download --only-binary :all: --platform manylinux2014_x86_64 \
+#       --python-version 312 -d wheelhouse/ \
+#       "tree-sitter>=0.21,<1" "tree-sitter-language-pack>=0.1,<2"
+#
+# (Version caps mirror the engine's `ast` extra — see vendor/README.md.)
+# Wrong-platform wheels fail the boot-time install harmlessly: the engine
+# falls back to the regex backend, exactly as without a wheelhouse.
 
-def build(dest="memory.zip", seed_dir=None) -> Path:
+
+def build(dest="memory.zip", seed_dir=None, wheelhouse=None) -> Path:
     staging = Path(tempfile.mkdtemp()) / "mem"
     staging.mkdir(parents=True)
 
@@ -41,8 +56,17 @@ def build(dest="memory.zip", seed_dir=None) -> Path:
     # NOTE: MASTER_PROMPT.md is intentionally NOT included — it is pasted into the
     # agent builder's instructions field and lives outside the ZIP.
 
-    # reference assets slot (Polish lemmas, wheelhouse) — created empty for now
+    # reference assets slot (Polish lemmas, wheelhouse)
     (staging / "reference").mkdir(exist_ok=True)
+    if wheelhouse:
+        wh = Path(wheelhouse)
+        wheels = sorted(wh.glob("*.whl")) if wh.is_dir() else []
+        if not wheels:
+            raise SystemExit(f"--wheelhouse {wheelhouse}: no *.whl files found")
+        dest_wh = staging / "reference" / "wheelhouse"
+        dest_wh.mkdir(parents=True)
+        for w in wheels:
+            shutil.copy2(w, dest_wh / w.name)
 
     if seed_dir:
         shutil.copytree(seed_dir, staging, dirs_exist_ok=True)
@@ -54,8 +78,11 @@ if __name__ == "__main__":
     ap = argparse.ArgumentParser()
     ap.add_argument("out", nargs="?", default="memory.zip")
     ap.add_argument("--seed", default=None, help="directory of initial KB content to include")
+    ap.add_argument("--wheelhouse", default=None,
+                    help="directory of *.whl files to bundle for offline install at boot "
+                         "(use: the tree-sitter AST backend; see module docstring)")
     args = ap.parse_args()
-    out = build(args.out, args.seed)
+    out = build(args.out, args.seed, args.wheelhouse)
     print(f"built {out}")
     print("reminder: paste MASTER_PROMPT.md into the agent builder's instructions "
           "field — it is NOT inside the ZIP.")

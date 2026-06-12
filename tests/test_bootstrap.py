@@ -62,3 +62,25 @@ def test_deployable_zip_carries_engine_and_boots(tmp_path):
     assert session.get("jira:PROJ-7") is not None
     # the unpacked engine is importable from inside the ZIP
     assert str(tmp_path / "deployed") in sys.path
+
+
+def test_build_bundles_wheelhouse(tmp_path):
+    """--wheelhouse packs *.whl into reference/wheelhouse/ (where boot()'s
+    offline installer already looks); an empty dir is a hard error, not a
+    silently AST-less artifact."""
+    from scripts.build_memory import build
+
+    wh = tmp_path / "wh"
+    wh.mkdir()
+    (wh / "tree_sitter-0.23.0-cp39-abi3-manylinux2014_x86_64.whl").write_bytes(b"x")
+    memzip = build(tmp_path / "memory.zip", wheelhouse=wh)
+    import zipfile
+    with zipfile.ZipFile(memzip) as zf:
+        names = zf.namelist()
+    assert any(n.startswith("reference/wheelhouse/") and n.endswith(".whl")
+               for n in names)
+
+    import pytest
+    (tmp_path / "empty").mkdir()
+    with pytest.raises(SystemExit):
+        build(tmp_path / "m2.zip", wheelhouse=tmp_path / "empty")
