@@ -82,6 +82,20 @@ def build(dest="memory.zip", seed_dir=None, wheelhouse=None) -> Path:
                 "      \"tree-sitter>=0.25,<1\" \"tree-sitter-language-pack>=1,<2\"\n\n"
                 "Or build WITHOUT --wheelhouse — the agent then uses the "
                 "always-on regex Apex backend.")
+        # keep only the NEWEST wheel per package — `pip download -d` appends,
+        # so a reused dir accumulates old versions, and bundling two versions
+        # of one package makes the boot-time install unresolvable
+        newest: dict = {}
+        for w in wheels:
+            name, ver = w.name.split("-")[0], w.name.split("-")[1]
+            key = tuple(int(x) for x in __import__("re").findall(r"\d+", ver))
+            if name not in newest or key > newest[name][0]:
+                if name in newest:
+                    print(f"wheelhouse: dropping older duplicate {newest[name][1].name}")
+                newest[name] = (key, w)
+            else:
+                print(f"wheelhouse: dropping older duplicate {w.name}")
+        wheels = [w for _, w in newest.values()]
         dest_wh = staging / "reference" / "wheelhouse"
         dest_wh.mkdir(parents=True)
         for w in wheels:

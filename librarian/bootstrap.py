@@ -88,8 +88,12 @@ def _install_wheelhouse(work_dir) -> dict:
     # without it pip leaves the old (property-style-API) binding in place — the
     # engine's probe then correctly refuses it and Apex stays on regex. Retry
     # on the user site for hosts whose system site-packages is read-only.
+    # install by NAME, not by wheel file: explicit files pin exact versions,
+    # so a wheelhouse holding two versions of one package would be unresolvable
+    # — by name, pip just picks the best wheel available in the dir
+    names = sorted({Path(w).name.split("-")[0].replace("_", "-") for w in wheels})
     cmd = [sys.executable, "-m", "pip", "install", "--no-index", "--upgrade",
-           "--find-links", str(wh), *wheels]
+           "--find-links", str(wh), *names]
     last = None
     for extra in ((), ("--user",)):
         try:
