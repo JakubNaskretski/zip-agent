@@ -12,8 +12,8 @@ This repo is the agent's **engine and build** — not a research write-up.
 
 | Path | What it is |
 |------|------------|
-| [`librarian/`](librarian/) | The engine — transactional KB mutation (the Librarian), manifest, schema, changelog, bootstrap, retrieve/index, and [`digest/`](librarian/digest/) source adapters (Salesforce, Mule). Real importable modules, `pytest`-tested. Zero runtime dependencies (stdlib only). |
-| [`vendor/graphbuilder/`](vendor/graphbuilder/) | Vendored Salesforce/OmniStudio metadata-graph parsing engine, used by [`digest/graphbuilder.py`](librarian/digest/graphbuilder.py). |
+| [`librarian/`](librarian/) | The engine — transactional KB mutation (the Librarian), manifest, schema, changelog, bootstrap, retrieve/index, and [`digest/`](librarian/digest/) source adapters (Salesforce, Mule, Jira, Confluence). Real importable modules, `pytest`-tested. Zero runtime dependencies (stdlib only). |
+| [`vendor/graphbuilder/`](vendor/graphbuilder/) | Vendored Salesforce/OmniStudio metadata-graph parsing engine (plus the Mule/Jira/Confluence extractors and the read-only Jira/Confluence collectors), used by the [`digest/`](librarian/digest/) adapters. |
 | [`MASTER_PROMPT.md`](MASTER_PROMPT.md) | The agent's persona + operating protocols — pasted into the agent builder's instructions field, **outside** the ZIP. |
 | [`scripts/build_memory.py`](scripts/build_memory.py) | Builds the deployable `memory.zip` — the engine packaged inside its own memory. |
 | [`tests/`](tests/) | Pytest suite for the engine and digests. |
@@ -29,10 +29,10 @@ shippable agent.
 
 ## Status
 
-The Librarian engine, the Salesforce and Mule digests, and the cross-source
-retrieve / entity-bridge are **implemented and tested**. Still to come: the
-read-only Jira/Confluence scraper + digest, MUnit/Apex test generation, and the
-built-in Domain KB port.
+The Librarian engine, the Salesforce, Mule, Jira and Confluence digests, the
+read-only Jira/Confluence collectors (vendored with the engine), and the
+cross-source retrieve / entity-bridge are **implemented and tested**. Still to
+come: MUnit/Apex test generation and the built-in Domain KB port.
 
 ```bash
 python3.11 -m venv .venv
