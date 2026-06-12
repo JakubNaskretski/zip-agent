@@ -1,4 +1,6 @@
 """Search index (entity bridge + FTS) and the retrieve primitives."""
+import pytest
+
 from librarian import Librarian, Store, KnowledgeUnit, rebuild_indexes, retrieve
 
 
@@ -23,6 +25,15 @@ def seed(tmp_path):
                 body="The bulk import retry fails when MeterPointService is called twice.") \
         .commit()
     return lib
+
+
+def test_open_index_error_teaches_the_real_import(tmp_path):
+    """The message is copy-pasteable by a host that knows nothing else — it must
+    name the actual import, not a path that only works mid-session."""
+    lib = seed(tmp_path)                       # seeded, but never indexed
+    with pytest.raises(LookupError) as e:
+        retrieve.open_index(lib)
+    assert "from librarian import rebuild_indexes" in str(e.value)
 
 
 def test_entity_bridge_joins_across_sources(tmp_path):

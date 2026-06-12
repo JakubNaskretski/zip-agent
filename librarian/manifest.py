@@ -93,6 +93,16 @@ class Manifest:
     def all(self):
         return list(self._kus.values())
 
+    @property
+    def entries(self):
+        """Read-only alias of :meth:`all`. :class:`~librarian.changelog.Changelog`
+        exposes its rows as ``.entries`` and deployed hosts generalize that
+        naming to the manifest (seen in the field as ``AttributeError:
+        'Manifest' object has no attribute 'entries'``) — so the manifest
+        answers to the same name. Returns a fresh list; mutation still flows
+        through the Librarian only."""
+        return self.all()
+
     def put(self, ku: KnowledgeUnit):
         self._kus[ku.id] = ku
 

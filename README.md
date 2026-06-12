@@ -146,6 +146,29 @@ Any knowledge the agent adds goes through the Librarian's transaction
 back to you. Download it and use it as the next session's upload — that file
 is the agent's entire state.
 
+### 7. Upgrading the agent (new code, same knowledge)
+
+The ZIP is code **and** state in one file, so shipping a new engine build must
+not cost the agent its ingested knowledge. Build the new code ZIP as in step 1,
+then merge the deployed agent's state into it:
+
+```bash
+python3 scripts/upgrade_memory.py OLD_memory.zip NEW_code.zip -o upgraded.zip
+```
+
+State (`kb/**`, `manifest.json`, `dev/` changelog + session state) comes from
+OLD; code and assets (`librarian/`, `graphbuilder/`, `reference/` incl. the
+wheelhouse) come from NEW. The derived indexes are deliberately **dropped** —
+they are always rebuildable and the new code may carry a newer index schema —
+so after first boot of `upgraded.zip` the agent must run
+`rebuild_indexes(lib, author, rationale)` (the script reminds you). It refuses
+to downgrade the knowledge schema and never touches its inputs.
+
+**Manual fallback** — worth knowing even if you never need it: `kb/` +
+`manifest.json` + `dev/changelog.json` ARE the whole state; the indexes are
+always rebuildable from them. Worst case, copy those three out of the old ZIP
+into a freshly built code ZIP and have the agent run `rebuild_indexes`.
+
 ## What the agent is for
 
 Single-project, single-tenant. Knowledge spans:

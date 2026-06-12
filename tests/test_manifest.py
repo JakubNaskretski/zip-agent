@@ -1,5 +1,7 @@
 import json
 
+import pytest
+
 from librarian import Manifest
 from factories import jira_ku, curated_ku
 
@@ -37,6 +39,21 @@ def test_save_load_roundtrip_and_stats_not_persisted(tmp_path):
     assert back.generation == 5
     assert back.get("jira:PROJ-1").title == "Issue 1"
     assert back.stats["total"] == 1
+
+
+def test_entries_is_a_read_only_alias_of_all():
+    """Hosts generalize Changelog's `.entries` naming to the manifest — the
+    alias keeps that from blowing up with an AttributeError."""
+    m = Manifest.new()
+    m.put(jira_ku(1))
+    m.put(curated_ku())
+    assert m.entries == m.all()
+    assert {k.id for k in m.entries} == {"jira:PROJ-1", "curated:mappings/meter-map"}
+
+    m.entries.append("junk")             # a fresh list each time — no back door
+    assert len(m.entries) == 2
+    with pytest.raises(AttributeError):  # and no setter
+        m.entries = []
 
 
 def test_inbound_links():
