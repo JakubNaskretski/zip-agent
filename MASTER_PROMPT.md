@@ -157,7 +157,7 @@ og  = office.load_graph(lib)       # office docs structure graph (sections/sheet
 |----------------|------|
 | Where is `Name` used / which sources mention it | `retrieve.find_entity(con, "Name")` → KUs; `retrieve.cross_source(con, "Name")` → grouped by source |
 | Not sure of the exact name | `retrieve.entity_like(con, "prefix")` to disambiguate |
-| Keyword / prose search | `retrieve.search(con, "text", k=8)` → ranked KUs + snippets; scope with `source="jira"` etc. |
+| Keyword / prose search | `retrieve.search(con, "text", k=8, lib=lib)` → ranked KUs + snippets (pass `lib` — snippets are read from KU bodies on demand); scope with `source="jira"` etc. |
 | A KU's metadata / its body | `lib.get(ku_id)` → manifest entry (title/entities/links/provenance); `lib.read_body(ku_id)` → content |
 | Fields / structure of an object | `sf.fields_of(g, "Obj")` |
 | What automation fires on an object | `sf.triggers_on(g, "Obj")` + `sf.flows_touching(g, "Obj")` |
@@ -170,7 +170,7 @@ og  = office.load_graph(lib)       # office docs structure graph (sections/sheet
 | What's exposed on which HTTP path / all Mule entry points | `mule.flows_exposed_on(mg, "/api/*")`; `mule.entrypoints(mg)` (listeners + schedulers + queue sources) |
 | What reads a property key / what a flow reads / secret-bearing keys | `mule.flows_reading(mg, "db.host")`, `mule.keys_read_by(mg, "flow")`, `mule.secure_keys(mg)` (key NAMES only — values are never captured) |
 | A Mule flow's configs / the app's connector dependencies | `mule.configs_used(mg, "flow")`; `mule.app_dependencies(mg)` |
-| What a design doc / spec / mapping workbook says about X | `retrieve.search(con, "X", source="docs")` → hits the `docs:<path>#text` sidecars; document structure (sections/sheets/tables, `columns` attrs) via `office.load_graph(lib)`; the original file via `lib.read_body("docs:<path>")` |
+| What a design doc / spec / mapping workbook says about X | `retrieve.search(con, "X", source="docs", lib=lib)` → hits the `docs:<path>#text` sidecars; document structure (sections/sheets/tables, `columns` attrs) via `office.load_graph(lib)`; the original file via `lib.read_body("docs:<path>")` |
 | Impact of changing `N` (anything) | `find_entity(con, "N")` → for each hit, `sf.dependents(g, node_id)` |
 | Any node's in/out edges, by type | `sf.neighbors(g, node_id, "in"\|"out", edge_type)` |
 
@@ -178,7 +178,7 @@ og  = office.load_graph(lib)       # office docs structure graph (sections/sheet
 
 **Step 4 — synthesize.** Answer in prose, **cite the KU ids** you used (they encode the source), and state a confidence tier (§5). Process in code; print the distilled answer, not raw KUs.
 
-**Cross-source, by design:** the entity bridge carries STRUCTURED names only — Salesforce components/fields, Mule flows/connectors/property keys/API paths, Jira issue keys, Confluence space keys/page ids. Jira, Confluence and office-document *content* is deliberately NOT entity-bridged (prose-derived names would pollute the bridge; office KUs carry NO entities at all); find references in them on demand with full-text search instead — e.g. "which Jira tickets touch `MeterPointService`?" is `retrieve.search(con, "MeterPointService")` and read the matching KUs. Never bulk-extract entity names out of Jira/Confluence/document text into the bridge.
+**Cross-source, by design:** the entity bridge carries STRUCTURED names only — Salesforce components/fields, Mule flows/connectors/property keys/API paths, Jira issue keys, Confluence space keys/page ids. Jira, Confluence and office-document *content* is deliberately NOT entity-bridged (prose-derived names would pollute the bridge; office KUs carry NO entities at all); find references in them on demand with full-text search instead — e.g. "which Jira tickets touch `MeterPointService`?" is `retrieve.search(con, "MeterPointService", lib=lib)` and read the matching KUs. Never bulk-extract entity names out of Jira/Confluence/document text into the bridge.
 
 ---
 
