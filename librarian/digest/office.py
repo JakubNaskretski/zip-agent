@@ -305,16 +305,13 @@ def parse_office(docs_dir, progress=None, *, strip_media=True) -> OfficeDigest:
                         errors=graph.get("errors", []), skipped=skipped)
 
 
-def to_kus(d: OfficeDigest, *, strip_media=True):
+def to_kus(d: OfficeDigest):
     """Per document: the raw KU (media-stripped working copy for OOXML, or
-    verbatim bytes for PDF) + the plain-text sidecar (skipped when there is no
-    text), then the structured graph KU with all inline section text redacted.
+    verbatim bytes for PDF — decided at parse time by ``parse_office``'s
+    ``strip_media``) + the plain-text sidecar (skipped when there is no text),
+    then the structured graph KU with all inline section text redacted.
     ``entities`` are ALWAYS empty — the prose rule; documents are found via FTS
-    over the sidecars, never the bridge.
-
-    ``strip_media`` is accepted for API symmetry with :func:`parse_office` and
-    :func:`ingest_office`; stripping is applied during parsing so this kwarg
-    has no further effect at the KU-generation stage."""
+    over the sidecars, never the bridge."""
     for rec in d.documents:
         raw_id = f"docs:{rec.rel}"
         prov = {
