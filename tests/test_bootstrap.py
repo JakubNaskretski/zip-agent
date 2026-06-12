@@ -84,3 +84,40 @@ def test_build_bundles_wheelhouse(tmp_path):
     (tmp_path / "empty").mkdir()
     with pytest.raises(SystemExit):
         build(tmp_path / "m2.zip", wheelhouse=tmp_path / "empty")
+
+
+def test_boot_discards_stale_workdir_for_newer_zip(tmp_path):
+    """A freshly uploaded (newer) memory.zip supersedes an old unpack — boot
+    must not reuse or mix the stale working dir."""
+    import os, time
+    from librarian.bootstrap import boot
+    from librarian.store import pack_zip
+
+    src = tmp_path / "src"
+    (src / "kb").mkdir(parents=True)
+    (src / "manifest.json").write_text('{"schema": 1, "generation": 0, "kus": []}')
+    z = pack_zip(src, tmp_path / "memory.zip")
+    work = tmp_path / "work"
+    boot(z, work_dir=work, install_wheelhouse=False, autosave=False)
+    stale = work / "leftover.tmp.txt"
+    stale.write_text("old generation")
+    # age the workdir, then ship a newer zip
+    old = time.time() - 120
+    os.utime(work / "manifest.json", (old, old))
+    (src / "kb" / "new-marker.txt").write_text("v2")
+    z = pack_zip(src, tmp_path / "memory.zip")
+    boot(z, work_dir=work, install_wheelhouse=False, autosave=False)
+    assert not stale.exists()                       # stale generation wiped
+    assert (work / "kb" / "new-marker.txt").exists()  # new content unpacked
+
+
+def test_boot_surfaces_wheelhouse_report(tmp_path):
+    from librarian.bootstrap import boot
+    from librarian.store import pack_zip
+
+    src = tmp_path / "src"
+    src.mkdir()
+    (src / "manifest.json").write_text('{"schema": 1, "generation": 0, "kus": []}')
+    z = pack_zip(src, tmp_path / "memory.zip")
+    s = boot(z, work_dir=tmp_path / "w", install_wheelhouse=True, autosave=False)
+    assert s.wheelhouse == {"installed": False, "reason": "no wheelhouse bundled"}

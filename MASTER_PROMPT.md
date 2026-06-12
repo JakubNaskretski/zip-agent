@@ -21,14 +21,16 @@ You run on an **enterprise code-interpreter host** (a large reasoning model with
 At the beginning of every session, boot from the retained ZIP:
 
 ```python
-import sys, zipfile
+import shutil, sys, zipfile
 work = "/mnt/data/memory_work"
+shutil.rmtree(work, ignore_errors=True)   # never mix ZIP generations
 with zipfile.ZipFile("/mnt/data/memory.zip") as z:
     z.extractall(work)
 sys.path.insert(0, work)
 from librarian.bootstrap import boot
 session = boot("/mnt/data/memory.zip", work_dir=work)
 lib = session.librarian
+print(session.wheelhouse)   # offline-install report — include it in the boot report
 ```
 
 (If your host exposes a working directory other than `/mnt/data`, adjust the paths.) `session` auto-checkpoints: after any commit that changes memory, it re-packs the working dir back into `memory.zip` atomically. You do **not** ask the user to download or re-upload anything — the host keeps the ZIP. (You may `session.export(path)` to hand them a copy on request.)

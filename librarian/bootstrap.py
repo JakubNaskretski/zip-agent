@@ -15,18 +15,21 @@ remembering to save.
 
 Runtime entry (paste into the sandbox at session start)::
 
-    import sys, zipfile
+    import shutil, sys, zipfile
     work = "/mnt/data/memory_work"
+    shutil.rmtree(work, ignore_errors=True)   # never mix ZIP generations
     with zipfile.ZipFile("/mnt/data/memory.zip") as z:
         z.extractall(work)
     sys.path.insert(0, work)
     from librarian.bootstrap import boot
     session = boot("/mnt/data/memory.zip", work_dir=work)
+    session.wheelhouse   # offline-install report — surface it in the boot report
     # ... session.librarian.begin(author, rationale)... .commit()  (auto-checkpoints)
 """
 from __future__ import annotations
 
 import glob
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -44,6 +47,7 @@ class Session:
         self.memory_zip = Path(memory_zip) if memory_zip else None
         self.autosave = autosave
         self.last_checkpoint_generation = None
+        self.wheelhouse = None   # boot() fills in the offline-install report
         if autosave and self.memory_zip is not None:
             self.librarian.on_commit = self._after_commit
 
@@ -94,19 +98,22 @@ def _install_wheelhouse(work_dir) -> dict:
     names = sorted({Path(w).name.split("-")[0].replace("_", "-") for w in wheels})
     cmd = [sys.executable, "-m", "pip", "install", "--no-index", "--upgrade",
            "--find-links", str(wh), *names]
-    last = None
+    first = None
     for extra in ((), ("--user",)):
         try:
-            last = subprocess.run([*cmd, *extra], capture_output=True, text=True)
+            res = subprocess.run([*cmd, *extra], capture_output=True, text=True)
         except Exception as e:   # pragma: no cover - environment dependent
             return {"installed": False, "reason": str(e)}
-        if last.returncode == 0:
+        if res.returncode == 0:
             out = {"installed": True, "count": len(wheels)}
             if extra:
                 out["user_site"] = True
             return out
-    return {"installed": False,   # pip's own words, so the boot report says WHY
-            "reason": ((last.stderr or last.stdout or "").strip())[-400:]}
+        first = first or res
+    # pip's own words, so the boot report says WHY — from the FIRST attempt
+    # (the --user retry usually fails with a less informative venv complaint)
+    return {"installed": False,
+            "reason": ((first.stderr or first.stdout or "").strip())[-400:]}
 
 
 def boot(memory_zip, work_dir=None, install_wheelhouse=True, autosave=True) -> Session:
@@ -114,7 +121,8 @@ def boot(memory_zip, work_dir=None, install_wheelhouse=True, autosave=True) -> S
 
     If ``memory_zip`` does not exist yet (a brand-new agent), an empty working
     dir is created and the first :meth:`Session.checkpoint` writes the ZIP.
-    If ``work_dir`` is already unpacked, it is reused rather than re-extracted.
+    An already-unpacked ``work_dir`` is reused — unless the ZIP is newer (a
+    fresh upload), in which case the stale unpack is discarded and replaced.
     """
     memory_zip = Path(memory_zip)
     if work_dir is None:
@@ -122,6 +130,16 @@ def boot(memory_zip, work_dir=None, install_wheelhouse=True, autosave=True) -> S
     work_dir = Path(work_dir)
 
     already_unpacked = (work_dir / "manifest.json").exists() or (work_dir / "librarian").is_dir()
+    if memory_zip.exists() and already_unpacked:
+        # A NEWER zip (a fresh upload) supersedes a stale working dir. Reusing
+        # the old unpack — or extracting over it — would mix two generations.
+        # The 1s slack tolerates the autosave checkpoint, which re-packs the
+        # zip moments after writing the working dir's manifest.
+        marker = work_dir / "manifest.json"
+        ref = marker if marker.exists() else work_dir
+        if memory_zip.stat().st_mtime > ref.stat().st_mtime + 1:
+            shutil.rmtree(work_dir)
+            already_unpacked = False
     if memory_zip.exists() and not already_unpacked:
         store = unpack_zip(memory_zip, work_dir)
     else:
@@ -132,7 +150,7 @@ def boot(memory_zip, work_dir=None, install_wheelhouse=True, autosave=True) -> S
     if (work_dir / "librarian").is_dir() and str(work_dir) not in sys.path:
         sys.path.insert(0, str(work_dir))
 
-    if install_wheelhouse:
-        _install_wheelhouse(work_dir)
-
-    return Session(store, Librarian(store), memory_zip=memory_zip, autosave=autosave)
+    report = _install_wheelhouse(work_dir) if install_wheelhouse else None
+    session = Session(store, Librarian(store), memory_zip=memory_zip, autosave=autosave)
+    session.wheelhouse = report   # surfaced so the boot report can say WHY
+    return session
