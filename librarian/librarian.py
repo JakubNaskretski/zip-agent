@@ -51,9 +51,32 @@ class LibrarianError(Exception):
     pass
 
 
+# Report rendering is CAPPED: sandbox stdout truncates long output, so a 7k-KU
+# ingest report printed in full loses its tail (counts and errors included) and
+# misleads the host model. Counts are always exact; the per-item listing shows
+# at most _REPORT_EXAMPLES examples per change kind plus "... and N more".
+_REPORT_EXAMPLES = 5
+
+
+def _capped_lines(lines, prefix) -> list:
+    """Group lines by their leading kind word (ADD / INGEST / RE-INGEST / …)
+    and keep at most ``_REPORT_EXAMPLES`` examples per kind."""
+    by_kind: dict = {}
+    for ln in lines:
+        by_kind.setdefault(ln.split(" ", 1)[0], []).append(ln)
+    out: list = []
+    for kind, group in by_kind.items():
+        out += [prefix + ln for ln in group[:_REPORT_EXAMPLES]]
+        extra = len(group) - _REPORT_EXAMPLES
+        if extra > 0:
+            out.append(f"{prefix}... and {extra} more {kind.rstrip(':')}")
+    return out
+
+
 class Report:
     """Result of preview()/commit(): whether it's valid, what changed, what was
-    a no-op, and any rejections."""
+    a no-op, and any rejections. ``repr`` shows exact counts but only example
+    items (see ``_REPORT_EXAMPLES``); the full lists stay on the attributes."""
 
     def __init__(self):
         self.ok = True
@@ -66,9 +89,9 @@ class Report:
         head = "OK" if self.ok else "REJECTED"
         lines = [f"[{head}] {len(self.changes)} change(s), "
                  f"{len(self.unchanged)} unchanged, {len(self.errors)} error(s)"]
-        lines += [f"  ~ {c}" for c in self.changes]
-        lines += [f"  = unchanged: {u}" for u in self.unchanged]
-        lines += [f"  x {e}" for e in self.errors]
+        lines += _capped_lines(self.changes, "  ~ ")
+        lines += _capped_lines([f"unchanged: {u}" for u in self.unchanged], "  = ")
+        lines += _capped_lines(self.errors, "  x ")
         return "\n".join(lines)
 
 
