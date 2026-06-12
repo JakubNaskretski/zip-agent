@@ -28,7 +28,7 @@ REPO = Path(__file__).resolve().parent.parent
 _IGNORE = shutil.ignore_patterns("__pycache__", "*.pyc", "*.pyo", "*.tmp")
 
 # What --wheelhouse is FOR: the optional tree-sitter AST Apex backend. The
-# vendored engine runs stdlib-only (regex backend) by default; bundling the two
+# vendored engine runs stdlib-only (regex backend) by default; bundling the
 # wheels below lets bootstrap.boot() pip-install them offline in the sandbox,
 # and the engine's runtime probe then upgrades Apex parsing automatically
 # (constructor refs, instance-call resolution). Download wheels matching the

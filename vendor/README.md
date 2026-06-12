@@ -8,15 +8,18 @@ in its sandbox (no network, no `pip install` from PyPI).
 
 The metadata-graph engine — the parsing backend for the Salesforce digest
 (`librarian/digest/graphbuilder.py`) and the Mule digest
-(`librarian/digest/mule.py`). Pure Python, **stdlib-only at runtime** (the
-optional tree-sitter AST Apex backend is *not* vendored; the engine falls back to
-its always-on regex backend).
+(`librarian/digest/mule.py`). Pure Python, **stdlib-only at runtime by default** (regex Apex
+backend). The optional tree-sitter AST backend is not part of this vendored
+package — its wheels ship separately in the memory.zip wheelhouse
+(``reference/wheelhouse/``, packed by ``scripts/build_memory.py``); when the
+boot-time install succeeds, the engine auto-upgrades, accepting both
+tree-sitter binding generations via its compatibility shim.
 
 | | |
 |---|---|
 | Source | `graph-builder` (private sibling repo) |
 | Pinned commit | `3627f1c` (engine `main`) |
-| Pinned tip | translated display labels (`label_<locale>` attrs via partial donor nodes) + node→source `source_path` traceability, flexipage fields/actions/related-lists/page attrs, Jira envelope incl. releases/sprints/epic, Apex method signatures, Confluence ancestors/timestamps — on top of `733c202` (schema-aware resolvers) |
+| Pinned tip | translated display labels (`label_<locale>` attrs via partial donor nodes) + node→source `source_path` traceability, flexipage fields/actions/related-lists/page attrs, Jira envelope incl. releases/sprints/epic, Apex method signatures, Confluence ancestors/timestamps + dual-API tree-sitter shim |
 | Vendored on | 2026-06-12 |
 | Scope | the `graphbuilder/` package only — no tests, no scripts |
 | Coverage | 26 Salesforce extractors (objects/fields, Apex+methods, triggers, flows+elements, LWC, Aura, Visualforce, flexipages, layouts, perm sets/profiles/groups, sharing rules, approval processes, reports, rules, OmniStudio, labels, …) + the Mule extractors (`graphbuilder/mulesoft` + `extractors/{mule,raml,muleprops,mulebuild}`: flow/flow-ref/connector graph, APIkit surface incl. RAML specs/resources, source triggers, global configs, property files/keys, pom + descriptor build metadata). Confluence + Jira subpackages are included for the planned Phase-4 collectors. |

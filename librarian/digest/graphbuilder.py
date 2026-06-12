@@ -7,12 +7,9 @@ flows + flow-elements, LWC, Aura, Visualforce, flexipages, layouts, permission
 sets/profiles/groups, sharing rules, approval processes, reports, rules,
 OmniStudio, labels, …) — a strict superset of the old digest's coverage.
 
-Vendoring pin (the graph-builder commit this engine was copied from — see
-``vendor/README.md``):
-
-    733c202efaab0042b2fd27c83fa9698710f8ffe9   (2026-06-12, main: Phase-3 Mule
-    taxonomy + managed-package component refs + two-phase build API +
-    schema-aware resolvers suppressing field-token/platform-call noise)
+Vendoring pin: see ``_VENDORED_SHA`` below and ``vendor/README.md`` — the
+single sources of truth, updated on every re-vendor (prose here deliberately
+carries no copy of the SHA; a stale duplicate misleads the agent that reads it).
 
 What the adapter does (the §14.1 ``parse → to_kus → ingest`` contract):
 
@@ -271,13 +268,23 @@ def digest(force_app_dir) -> Digest:
 # --------------------------------------------------------------------------- #
 # built-in tool KU (records the vendored engine version + pin)
 # --------------------------------------------------------------------------- #
+def _apex_backend_note() -> str:
+    from graphbuilder.extractors.apex import _APEX_PARSER
+    if _APEX_PARSER is not None:
+        return ("tree-sitter AST Apex backend active (wheelhouse installed; "
+                "regex is the stdlib-only fallback)")
+    return ("stdlib-only regex Apex backend (AST wheels not installed — see "
+            "reference/wheelhouse/ and the boot report)")
+
+
 def _tool_provenance() -> dict:
     return {
         "package": "graphbuilder",
         "vendored_sha": _VENDORED_SHA,
         "vendored_at": _VENDORED_AT,
-        "source_repo": "graph-builder (private)",
-        "runtime": "stdlib-only (regex Apex backend; tree-sitter AST not vendored)",
+        "source_repo": "graph-builder (public)",
+        # live, not aspirational: which Apex backend this session actually runs
+        "runtime": _apex_backend_note(),
         "doc": "vendor/README.md",
     }
 
