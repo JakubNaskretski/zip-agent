@@ -112,7 +112,7 @@ def parse_jira(dump_dir) -> JiraDigest:
     builder = (_GraphBuilder().register(*_jira_extractors())
                .register_resolver(*_gb_default_resolvers()))
     paths = sorted(p for p in root.rglob("*") if p.is_file())
-    extracted, errors = builder.extract_files(paths)
+    extracted, errors = builder.extract_files(paths, root=root)
 
     issues: list = []
     for path, nodes, _raw_edges in extracted:

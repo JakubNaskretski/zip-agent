@@ -232,6 +232,11 @@ class ObjectExtractor:
             rel = _REF_TYPES.get((f.type or "").replace(" ", "").lower())
             if rel:
                 attrs["relationship"] = rel
+            # the field's own decomposed file, not the parent object-meta.xml,
+            # is the base source an agent should be pointed at
+            ffile = obj_dir / "fields" / f"{f.name}.field-meta.xml"
+            if ffile.is_file():
+                attrs["source_path"] = str(ffile)
             nodes.append(node(fid, "field", qual, **attrs))
             edges.append(raw_edge(fid, "field_of", "object", obj.name))
             # lookup edge field -> referenced object (master-detail or lookup)
@@ -344,7 +349,8 @@ class ObjectExtractor:
                     continue
                 rt_qual = f"{obj.name}.{rt_name}"
                 rt_id = f"recordtype/{rt_qual}"
-                nodes.append(node(rt_id, "recordtype", rt_qual))
+                nodes.append(node(rt_id, "recordtype", rt_qual,
+                                  source_path=str(rp)))
                 edges.append(raw_edge(oid, "contains", "recordtype", rt_qual))
 
         return nodes, edges

@@ -51,10 +51,28 @@ class ConfluenceExtractor:
             attrs["space_key"] = p.space_key
         if p.version:
             attrs["version"] = p.version
+        if p.status and p.status != "current":
+            # "current" is every live page's default — only deviations
+            # (trashed / draft / archived) are knowledge
+            attrs["status"] = p.status
+        if p.created:
+            attrs["created"] = p.created     # history.createdDate (when expanded)
+        if p.updated:
+            attrs["updated"] = p.updated     # version.when = last modified
+        if p.ancestors:
+            # full hierarchy chain root-first, as page ids (same string type as
+            # page_id); parent_title above still drives the child-of edge
+            attrs["ancestors"] = [a_id for a_id, _ in p.ancestors]
         if p.url:
             attrs["url"] = p.url
         if p.urls:
             attrs["urls"] = list(dict.fromkeys(p.urls))
+        if p.tiny_links:
+            # /x/<tinyId> short links: tiny ids are base64-ish encodings, NOT page
+            # ids, so they cannot be resolved to a page node offline. Surfaced as
+            # an attr only — never a links-to edge (a wrong edge is worse than
+            # none); the agent at least sees an unresolved short-link exists.
+            attrs["tiny_links"] = list(dict.fromkeys(p.tiny_links))
         if p.jira_keys:
             # attr only — wiring page -> jiraissue is the deliberate jira.join step
             attrs["jira_keys"] = list(dict.fromkeys(p.jira_keys))

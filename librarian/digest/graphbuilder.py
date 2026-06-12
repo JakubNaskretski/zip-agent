@@ -66,7 +66,7 @@ from graphbuilder.extractors import all_extractors as _gb_all_extractors
 from graphbuilder.resolvers import default_resolvers as _gb_default_resolvers
 
 # pin recorded in the built-in tool KU (and echoed in this module's docstring)
-_VENDORED_SHA = "733c202efaab0042b2fd27c83fa9698710f8ffe9"
+_VENDORED_SHA = "eaa5e41"   # engine feat/node-quality tip (merge to main pending)
 _VENDORED_AT = "2026-06-12"
 
 GRAPH_ID = "salesforce:graph/sf"
@@ -254,7 +254,7 @@ def digest(force_app_dir) -> Digest:
     builder = (_GraphBuilder().register(*_sf_extractors())
                .register_resolver(*_gb_default_resolvers()))
     paths = sorted(p for p in root.rglob("*") if p.is_file())
-    extracted, errors = builder.extract_files(paths)
+    extracted, errors = builder.extract_files(paths, root=root)
     kus = [_file_to_ku(path, nodes, raw_edges, root)
            for path, nodes, raw_edges in extracted if nodes]
     graph = builder.resolve_extracted(extracted, errors)

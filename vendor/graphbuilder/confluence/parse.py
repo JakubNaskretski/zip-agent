@@ -42,6 +42,9 @@ class CPage:
     labels: list = field(default_factory=list)       # label names
     author: str = ""                                 # last-version author's key/name ("" if absent)
     version: int = 0
+    status: str = ""                                 # REST status: "current"/"trashed"/"draft"/"archived"
+    created: str = ""                                # history.createdDate ISO string ("" if not expanded)
+    updated: str = ""                                # version.when ISO string ("" if absent)
     url: str = ""                                    # absolute web URL if derivable, else ""
     links: list = field(default_factory=list)        # [(title, space_key_or_empty), ...]
     includes: list = field(default_factory=list)     # include/excerpt-include macro targets, same shape
@@ -49,6 +52,7 @@ class CPage:
     attachments: list = field(default_factory=list)  # filenames
     mentions: list = field(default_factory=list)     # user keys
     urls: list = field(default_factory=list)         # external href / ri:url values (for the SF join)
+    tiny_links: list = field(default_factory=list)   # /x/<tinyId> short-link ids (unresolvable offline)
     body_text: str = ""                              # plain-text body (the content capture)
 
 
@@ -85,6 +89,13 @@ _USERNAME = re.compile(r'ri:username\s*=\s*"([^"]*)"', re.I)
 _ACCOUNTID = re.compile(r'ri:account-id\s*=\s*"([^"]*)"', re.I)
 _HREF = re.compile(r'href\s*=\s*"([^"]*)"', re.I)
 _RI_URL = re.compile(r'<ri:url\b[^>]*?ri:value\s*=\s*"([^"]*)"', re.I)
+# Confluence "tiny" short link: an href of the form /x/<tinyId> (relative) or
+# https://host/x/<tinyId> (absolute). The tiny id is a URL-safe-base64-ish
+# ENCODING of an internal page pointer, NOT a page id — it cannot be resolved to
+# a page node offline. Matched against the WHOLE href (fullmatch) so ordinary
+# paths that merely contain "/x/" don't false-positive; no "/" in the id class,
+# so deeper paths under /x/ never match.
+_TINY_HREF = re.compile(r"(?:https?://[^/]+)?/x/([A-Za-z0-9+_=-]+)/?", re.I)
 
 _CDATA = re.compile(r"<!\[CDATA\[|\]\]>")
 _CDATA_BLOCK = re.compile(r"<!\[CDATA\[.*?\]\]>", re.S)
@@ -181,6 +192,19 @@ def iter_external_urls(storage: str) -> list:
     return out
 
 
+def iter_tiny_links(storage: str) -> list:
+    """Tiny ids of every ``/x/<tinyId>`` short-link href (relative or absolute) in
+    a storage body. Tiny ids are base64-ish encodings — NOT page ids — so the
+    extractor surfaces them as a page attr only, never a ``links-to`` edge (a
+    wrong edge is worse than none). Non-tiny hrefs are skipped."""
+    out = []
+    for m in _HREF.finditer(storage or ""):
+        tm = _TINY_HREF.fullmatch(html.unescape(m.group(1)).strip())
+        if tm:
+            out.append(tm.group(1))
+    return out
+
+
 def body_text(storage: str) -> str:
     """Best-effort plain text of a storage body — CDATA delimiters dropped (code
     kept), tags stripped, entities unescaped, whitespace collapsed. Tolerant:
@@ -263,6 +287,10 @@ def parse_page(path) -> CPage:
         labels=labels,
         author=str(author or ""),
         version=version,
+        status=str(data.get("status") or ""),
+        # history is only present when the collector expanded it — tolerate absence
+        created=str(_dig(data, "history", "createdDate") or ""),
+        updated=str(_dig(data, "version", "when") or ""),
         url=str(url or ""),
         links=iter_page_links(scan_src),
         includes=iter_include_targets(scan_src),
@@ -270,5 +298,6 @@ def parse_page(path) -> CPage:
         attachments=iter_attachment_refs(scan_src),
         mentions=iter_user_mentions(scan_src),
         urls=iter_external_urls(scan_src),
+        tiny_links=iter_tiny_links(scan_src),
         body_text=body_text(storage),
     )

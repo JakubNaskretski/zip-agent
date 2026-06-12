@@ -89,9 +89,9 @@ class GraphBuilder:
         """
         repo = Path(repo)
         paths = sorted(p for p in repo.rglob("*") if p.is_file())
-        return self.build_files(paths)
+        return self.build_files(paths, root=repo)
 
-    def build_files(self, paths) -> dict:
+    def build_files(self, paths, root=None) -> dict:
         """Run the same two-pass build over an explicit iterable of files.
 
         Identical contract to :meth:`build`, but you choose the files — used to
@@ -103,15 +103,24 @@ class GraphBuilder:
         results (e.g. a digest building one record per source file) without
         paying for a second extraction pass.
         """
-        extracted, errors = self.extract_files(paths)
+        extracted, errors = self.extract_files(paths, root=root)
         return self.resolve_extracted(extracted, errors)
 
-    def extract_files(self, paths) -> tuple:
+    def extract_files(self, paths, root=None) -> tuple:
         """Pass 1 only: offer each file to the extractors and keep the raw
         results per file. Returns ``(extracted, errors)`` where ``extracted`` is
         ``[(Path, nodes, raw_edges), …]`` for every handled file (in input
         order) and ``errors`` is the build-level error list. Nothing raises: an
-        unhandled file is skipped, a throwing extractor becomes an error entry."""
+        unhandled file is skipped, a throwing extractor becomes an error entry.
+
+        Every emitted node is stamped with ``source_path`` — the file it came
+        from, relative to ``root`` when given (POSIX separators), else the path
+        as passed — so a graph node can always be traced back to its base
+        source. An extractor that sets its own ``source_path`` (e.g. a
+        decomposed child file) wins, relativized the same way; for a node
+        emitted from several files the registry keeps the first file seen
+        (matching node-registry first-wins)."""
+        root = Path(root) if root is not None else None
         extracted: list[tuple] = []
         errors: list[dict] = []
         for path in paths:
@@ -131,6 +140,12 @@ class GraphBuilder:
                     "error": f"{type(exc).__name__}: {exc}",
                 })
                 continue
+            src = _source_path(path, root)
+            for n in nodes or []:
+                sp = n.get("source_path")
+                # extractor-set paths win but get the same relativization (an
+                # already-relative value passes through _source_path unchanged)
+                n["source_path"] = src if sp is None else _source_path(Path(sp), root)
             extracted.append((path, nodes or [], edges or []))
         return extracted, errors
 
@@ -172,6 +187,18 @@ class GraphBuilder:
             "unresolved": unresolved,
             "errors": list(errors or []),
         }
+
+
+def _source_path(path: Path, root) -> str:
+    """The traceability value stamped on nodes: ``path`` relative to ``root``
+    (POSIX separators, for cross-OS determinism) when it lies under it, else the
+    path as given."""
+    if root is not None:
+        try:
+            return path.relative_to(root).as_posix()
+        except ValueError:  # outside the root — keep the full path
+            pass
+    return path.as_posix()
 
 
 def _safe(fn: Callable[[], _T], default: _T) -> _T:

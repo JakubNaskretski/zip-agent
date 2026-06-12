@@ -1,13 +1,22 @@
 """Jira Data Center collector — pull project(s) into a local issue dump.
 
-Network I/O for the Jira source lives ONLY here. It walks the REST ``search``
-endpoint per project (JQL ``project = KEY ORDER BY id ASC``) and writes each
-issue's raw API JSON to ``<out_dir>/<PROJECTKEY>/<KEY>.issue.json`` — exactly the
-shape :mod:`graphbuilder.jira.parse` and the extractor expect. Collection is
+Network I/O for the Jira source lives ONLY here — and is STRICTLY read-only
+(every request goes through :func:`graphbuilder.collectutil.get_json`, GET with
+no body). It walks the REST ``search`` endpoint per project (JQL ``project = KEY
+ORDER BY id ASC``) and writes each issue's raw API JSON to
+``<out_dir>/<PROJECTKEY>/<KEY>.issue.json`` — exactly the shape
+:mod:`graphbuilder.jira.parse` and the extractor expect. Collection is
 incremental (an issue whose dump already holds the same ``updated`` timestamp is
 not rewritten; vanished keys are pruned after a complete listing). Dependency-free
 (stdlib ``urllib``); the HTTP ``opener`` is injectable so the collector is
 testable with no network.
+
+One extra GET to ``/rest/api/2/field`` at the start of each run discovers the
+instance-specific customfield ids whose display names are "Epic Link" and
+"Sprint" (Data Center keeps both in customfields). The discovered ids are
+appended to the per-issue ``fields`` request and the id -> name map is written to
+``<out_dir>/_fields.json`` so the parser resolves them offline; instances without
+those fields are tolerated (the map is just empty).
 
 Auth is a Personal Access Token sent as ``Authorization: Bearer <token>`` (Jira
 8.14+ Data Center/Server — same model as the Confluence collector). The token is
@@ -36,10 +45,17 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 from ..collectutil import build_opener, get_json, mark_incomplete, prune_dir, safe_segment
+from .parse import FIELDS_FILE
 
-# Everything the extractor needs, nothing it doesn't (no comments, no changelog).
-_FIELDS = ("summary,description,issuetype,status,labels,assignee,reporter,"
-           "issuelinks,subtasks,parent,project,updated")
+# Everything the extractor needs, nothing it doesn't (no comments, no changelog,
+# no worklogs, no attachments). The Epic Link / Sprint customfield ids discovered
+# at run start are appended per request — this constant stays fixed.
+_FIELDS = ("summary,description,issuetype,status,priority,resolution,components,"
+           "fixVersions,created,labels,assignee,reporter,issuelinks,subtasks,"
+           "parent,project,updated")
+# Display names of the Data Center customfields worth collecting (their ids vary
+# per instance — discovered via /rest/api/2/field; written to FIELDS_FILE).
+_CUSTOMFIELD_NAMES = {"epic link", "sprint"}
 _TOKEN_ENV = "JIRA_TOKEN"
 _PER_PAGE = 50           # REST ``maxResults`` per request
 _MAX_REQUESTS = 10_000   # hard cap on pagination requests per project (loop-safety)
@@ -71,8 +87,23 @@ def _existing_updated(path: Path) -> str:
         return ""
 
 
-def _collect_project(opener, base, project, out_dir, headers, per_page, timeout,
-                     sleep, remote_links):
+def _discover_customfields(opener, base, headers, timeout, sleep) -> dict:
+    """One read-only GET to ``/rest/api/2/field``: the customfield id -> display
+    name map for the names in ``_CUSTOMFIELD_NAMES`` (case-insensitive). Fields a
+    given instance doesn't have are simply absent from the map."""
+    payload = get_json(opener, f"{base}/rest/api/2/field", headers, timeout, sleep)
+    mapping = {}
+    for fld in payload if isinstance(payload, list) else []:
+        if not isinstance(fld, dict):
+            continue
+        fid, name = str(fld.get("id") or ""), str(fld.get("name") or "")
+        if fid and name.strip().lower() in _CUSTOMFIELD_NAMES:
+            mapping[fid] = name
+    return mapping
+
+
+def _collect_project(opener, base, project, out_dir, headers, fields, per_page,
+                     timeout, sleep, remote_links):
     """Page through one project, writing each issue dump. Returns a dict
     ``{written, unchanged, seen, complete, skipped, errors}`` — its own state, so
     projects can run on separate threads. Pagination stays sequential.
@@ -93,7 +124,7 @@ def _collect_project(opener, base, project, out_dir, headers, per_page, timeout,
         requests_made += 1
         q = urllib.parse.urlencode({
             "jql": f"project = {project} ORDER BY id ASC",
-            "startAt": start, "maxResults": per_page, "fields": _FIELDS,
+            "startAt": start, "maxResults": per_page, "fields": fields,
         })
         try:
             payload = get_json(opener, f"{base}/rest/api/2/search?{q}", headers, timeout, sleep)
@@ -161,6 +192,13 @@ def collect(base_url, project_keys, out_dir, *, token=None, per_page=_PER_PAGE,
     returns have their dump files deleted; an aborted project is reported in
     ``incomplete``, marked with a ``.incomplete`` sentinel, and never pruned.
 
+    Each run starts with one GET to ``/rest/api/2/field`` to discover the Epic
+    Link / Sprint customfield ids (instance-specific on Data Center); they are
+    requested per issue and their id -> name map lands in ``<out_dir>/_fields.json``
+    for the parser. A failed discovery degrades gracefully (reported in
+    ``errors`` with ``project: None``; issues still collect, without those
+    fields); the incremental/prune behaviour is untouched by it.
+
     Returns ``{"projects": {key: written}, "issues": N, "unchanged": N,
     "pruned": [keys...], "incomplete": [keys...], "skipped": [...], "errors": [...]}``
     — and never logs the token or issue content.
@@ -181,9 +219,25 @@ def collect(base_url, project_keys, out_dir, *, token=None, per_page=_PER_PAGE,
     headers = {"Authorization": f"Bearer {token}", "Accept": "application/json"}
     out_dir = Path(out_dir)
 
+    # Epic Link / Sprint customfield discovery — once per run, read-only, never
+    # fatal: without it the run still collects everything except those two.
+    customfields: dict = {}
+    discovery_error = None
+    if projects:
+        try:
+            customfields = _discover_customfields(opener, base, headers, timeout, sleep)
+            out_dir.mkdir(parents=True, exist_ok=True)
+            (out_dir / FIELDS_FILE).write_text(
+                json.dumps(customfields, ensure_ascii=False, indent=2, sort_keys=True),
+                encoding="utf-8")
+        except Exception as exc:
+            discovery_error = {"project": None,
+                               "error": f"field discovery: {type(exc).__name__}: {exc}"}
+    fields = ",".join([_FIELDS, *sorted(customfields)])
+
     def _run(project):
-        return _collect_project(opener, base, project, out_dir, headers, per_page,
-                                timeout, sleep, remote_links)
+        return _collect_project(opener, base, project, out_dir, headers, fields,
+                                per_page, timeout, sleep, remote_links)
 
     workers = max_workers if max_workers else min(8, max(1, len(projects)))
     if workers > 1 and len(projects) > 1:
@@ -207,4 +261,6 @@ def collect(base_url, project_keys, out_dir, *, token=None, per_page=_PER_PAGE,
         if not r["complete"]:
             summary["incomplete"].append(project)
         mark_incomplete(project_dir, r["complete"])
+    if discovery_error:
+        summary["errors"].append(discovery_error)
     return summary

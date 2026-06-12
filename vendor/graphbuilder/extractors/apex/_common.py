@@ -40,6 +40,62 @@ _METHOD_ANNOTATIONS = (
 # leading namespace.
 _LABEL_REF = re.compile(r"(?:\$Label|System\.Label|Label)\.([A-Za-z_]\w*)")
 
+# Apex access modifiers — the `visibility` attr values on apexmethod nodes
+# (lowercased; omitted when the declaration states none).
+_ACCESS_MODIFIERS = ("public", "private", "protected", "global")
+
+# Class-level sharing modifier -> the apexclass `sharing` attr
+# ("with"/"without"/"inherited"; omitted when unstated).
+_SHARING_RE = re.compile(r"\b(with|without|inherited)\s+sharing\b", re.I)
+
+
+def _norm_type(t: str) -> str:
+    """A type as written, with whitespace normalised so both backends emit the
+    identical string: runs of whitespace collapse to one space, generics pack
+    (`Map<Id , Account >` -> `Map<Id, Account>`), `[ ]` -> `[]`."""
+    t = re.sub(r"\s+", " ", t or "").strip()
+    t = re.sub(r"\s*<\s*", "<", t)
+    t = re.sub(r"\s*>", ">", t)
+    t = re.sub(r"\s*,\s*", ", ", t)
+    t = re.sub(r"\s*\[\s*\]", "[]", t)
+    return t
+
+
+def _parse_params(raw: str) -> list:
+    """Best-effort ``[{"type": ..., "name": ...}, ...]`` from the text between a
+    signature's parens (the regex backend's parameter parse; the AST backend
+    reads precise ``formal_parameter`` nodes instead but emits the same shape).
+
+    Splits on top-level commas only — a small bracket-depth scanner tracks
+    ``<>`` nesting so a generic like ``Map<Id, List<Account>>`` is never split
+    on its inner commas. Each piece must look like ``[final] <type> <name>``;
+    a piece that doesn't fit is skipped (string-level parse, not a grammar)."""
+    out: list = []
+    raw = (raw or "").strip()
+    if not raw:
+        return out
+    parts: list[str] = []
+    depth = 0
+    cur: list[str] = []
+    for ch in raw:
+        if ch == "<":
+            depth += 1
+        elif ch == ">":
+            depth = max(0, depth - 1)
+        if ch == "," and depth == 0:
+            parts.append("".join(cur))
+            cur = []
+        else:
+            cur.append(ch)
+    parts.append("".join(cur))
+    for part in parts:
+        part = re.sub(r"^\s*final\s+", "", part.strip(), flags=re.I)
+        m = re.fullmatch(r"(?s)(.+)\s+([A-Za-z_]\w*)", part)
+        if not m:
+            continue
+        out.append({"type": _norm_type(m.group(1)), "name": m.group(2)})
+    return out
+
 
 def _strip_string_literals(text: str) -> str:
     """Blank out string-literal contents so identifier scans (calls, DML var
