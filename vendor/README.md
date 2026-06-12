@@ -18,11 +18,11 @@ tree-sitter binding generations via its compatibility shim.
 | | |
 |---|---|
 | Source | `graph-builder` (private sibling repo) |
-| Pinned commit | `d00a3f1` (engine `main`) |
-| Pinned tip | translated display labels (`label_<locale>` attrs via partial donor nodes) + node→source `source_path` traceability, flexipage fields/actions/related-lists/page attrs, Jira envelope incl. releases/sprints/epic, Apex method signatures, Confluence ancestors/timestamps + dual-API tree-sitter shim |
-| Vendored on | 2026-06-12 |
+| Pinned commit | `bfd3907` (engine `main`) |
+| Pinned tip | pptx extractor — slides/notes/charts, p14 declared sections |
+| Vendored on | 2026-06-13 |
 | Scope | the `graphbuilder/` package only — no tests, no scripts |
-| Coverage | 26 Salesforce extractors (objects/fields, Apex+methods, triggers, flows+elements, LWC, Aura, Visualforce, flexipages, layouts, perm sets/profiles/groups, sharing rules, approval processes, reports, rules, OmniStudio, labels, …) + the Mule extractors (`graphbuilder/mulesoft` + `extractors/{mule,raml,muleprops,mulebuild}`: flow/flow-ref/connector graph, APIkit surface incl. RAML specs/resources, source triggers, global configs, property files/keys, pom + descriptor build metadata). Confluence + Jira subpackages are included for the planned Phase-4 collectors. |
+| Coverage | 26 Salesforce extractors (objects/fields, Apex+methods, triggers, flows+elements, LWC, Aura, Visualforce, flexipages, layouts, perm sets/profiles/groups, sharing rules, approval processes, reports, rules, OmniStudio, labels, …) + the Mule extractors (`graphbuilder/mulesoft` + `extractors/{mule,raml,muleprops,mulebuild}`: flow/flow-ref/connector graph, APIkit surface incl. RAML specs/resources, source triggers, global configs, property files/keys, pom + descriptor build metadata). Confluence + Jira subpackages are included for the planned Phase-4 collectors. Office documents: docx (Word), xlsx/xlsm (Excel), pdf (optional pypdf), pptx/pptm (PowerPoint — slides, speaker notes, chart labels, p14 declared sections). |
 
 The pin is also recorded in code (`librarian/digest/graphbuilder.py:_VENDORED_SHA`)
 and at runtime in the built-in KU `agent:tool/graphbuilder`.

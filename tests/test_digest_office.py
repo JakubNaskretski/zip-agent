@@ -2,10 +2,11 @@
 
 Fixtures are minimal OOXML zips authored in-test with stdlib ``zipfile``
 (fictional Acme / MeterPoint content, Polish strings for unicode coverage):
-a Word spec with declared headings and an Excel mapping sheet with a heuristic
-header row. They cover the three-artifact contract (raw bytes KU + plain-text
-sidecar + redacted structure graph), the hard prose rule (entities ALWAYS
-empty), idempotent re-ingest, FTS over the sidecar, and bad-file surfacing.
+a Word spec with declared headings, an Excel mapping sheet with a heuristic
+header row, and a PowerPoint deck with slides, speaker notes and a chart. They
+cover the three-artifact contract (raw bytes KU + plain-text sidecar + redacted
+structure graph), the hard prose rule (entities ALWAYS empty), idempotent
+re-ingest, FTS over the sidecar, and bad-file surfacing.
 """
 import hashlib
 import json
@@ -240,3 +241,270 @@ def test_bad_file_recorded_never_raises(tmp_path):
                                   "ingest documents with one broken file")
     assert rep.ok and lib.get(f"docs:{XLSX_REL}") is not None
     assert lib.get("docs:broken.docx") is None             # no KU minted for the bad file
+
+
+# --------------------------------------------------------------------------- #
+# PowerPoint (pptx) digest tests
+# --------------------------------------------------------------------------- #
+P_NS = "http://schemas.openxmlformats.org/presentationml/2006/main"
+A_NS = "http://schemas.openxmlformats.org/drawingml/2006/main"
+P14_NS = "http://schemas.microsoft.com/office/powerpoint/2010/main"
+C_NS = "http://schemas.openxmlformats.org/drawingml/2006/chart"
+
+PPTX_CT = (
+    '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+    '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">'
+    '<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>'
+    '<Default Extension="xml" ContentType="application/xml"/>'
+    '<Override PartName="/ppt/presentation.xml" ContentType='
+    '"application/vnd.openxmlformats-officedocument.presentationml.presentation.main+xml"/>'
+    "</Types>"
+)
+
+
+def _pptx_presentation(slide_rids):
+    """Minimal ppt/presentation.xml with ordered slide ids."""
+    sld_id_els = "".join(
+        f'<p:sldId id="{i + 256}" r:id="{rid}"/>'
+        for i, rid in enumerate(slide_rids)
+    )
+    return (
+        f'<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        f'<p:presentation xmlns:p="{P_NS}" xmlns:r="{RNS}">'
+        f'<p:sldIdLst>{sld_id_els}</p:sldIdLst>'
+        "</p:presentation>"
+    )
+
+
+def _pptx_prs_rels(*slide_parts):
+    entries = "".join(
+        f'<Relationship Id="rId{i + 1}" Type="{RNS}/slide" Target="{part}"/>'
+        for i, part in enumerate(slide_parts)
+    )
+    return f'<Relationships xmlns="{PK}">{entries}</Relationships>'
+
+
+def _pptx_slide(title=None, body_paras=None):
+    shapes = ""
+    if title:
+        shapes += (
+            f'<p:sp xmlns:p="{P_NS}" xmlns:a="{A_NS}">'
+            f'<p:nvSpPr><p:nvPr><p:ph type="title"/></p:nvPr></p:nvSpPr>'
+            f'<p:txBody><a:p><a:r><a:t>{title}</a:t></a:r></a:p></p:txBody>'
+            "</p:sp>"
+        )
+    if body_paras:
+        paras = "".join(
+            f'<a:p xmlns:a="{A_NS}"><a:r><a:t>{p}</a:t></a:r></a:p>'
+            for p in body_paras
+        )
+        shapes += (
+            f'<p:sp xmlns:p="{P_NS}" xmlns:a="{A_NS}">'
+            "<p:nvSpPr><p:nvPr/></p:nvSpPr>"
+            f"<p:txBody>{paras}</p:txBody></p:sp>"
+        )
+    return (
+        f'<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        f'<p:sld xmlns:p="{P_NS}" xmlns:a="{A_NS}">'
+        f"<p:cSld><p:spTree>{shapes}</p:spTree></p:cSld></p:sld>"
+    )
+
+
+def _pptx_slide_rels(*rels):
+    entries = "".join(
+        f'<Relationship Id="{rid}" Type="{RNS}/{rtype}" Target="{target}"/>'
+        for rid, rtype, target in rels
+    )
+    return f'<Relationships xmlns="{PK}">{entries}</Relationships>'
+
+
+def _pptx_notes(text):
+    return (
+        f'<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        f'<p:notes xmlns:p="{P_NS}" xmlns:a="{A_NS}">'
+        f'<p:cSld><p:spTree>'
+        f'<p:sp><p:nvSpPr><p:nvPr><p:ph type="body"/></p:nvPr></p:nvSpPr>'
+        f'<p:txBody><a:p><a:r><a:t>{text}</a:t></a:r></a:p></p:txBody>'
+        "</p:sp></p:spTree></p:cSld></p:notes>"
+    )
+
+
+def _pptx_chart(title=None, series=None, categories=None, numeric_vals=None):
+    title_xml = ""
+    if title:
+        title_xml = (
+            f'<c:title xmlns:c="{C_NS}">'
+            f'<c:tx><c:rich><a:p xmlns:a="{A_NS}"><a:r><a:t>{title}</a:t></a:r></a:p>'
+            f"</c:rich></c:tx></c:title>"
+        )
+    series_xml = ""
+    for s_name in (series or []):
+        cat_xml = ""
+        if categories:
+            pts = "".join(
+                f'<c:pt xmlns:c="{C_NS}" idx="{i}"><c:v>{lbl}</c:v></c:pt>'
+                for i, lbl in enumerate(categories)
+            )
+            cat_xml = (
+                f'<c:cat xmlns:c="{C_NS}"><c:strRef><c:strCache>{pts}</c:strCache>'
+                "</c:strRef></c:cat>"
+            )
+        val_xml = ""
+        if numeric_vals:
+            npts = "".join(
+                f'<c:pt xmlns:c="{C_NS}" idx="{i}"><c:v>{v}</c:v></c:pt>'
+                for i, v in enumerate(numeric_vals)
+            )
+            val_xml = (
+                f'<c:val xmlns:c="{C_NS}"><c:numRef><c:numCache>{npts}</c:numCache>'
+                "</c:numRef></c:val>"
+            )
+        series_xml += (
+            f'<c:ser xmlns:c="{C_NS}">'
+            f'<c:tx><c:strRef><c:strCache>'
+            f'<c:pt xmlns:c="{C_NS}" idx="0"><c:v>{s_name}</c:v></c:pt>'
+            f"</c:strCache></c:strRef></c:tx>"
+            f"{cat_xml}{val_xml}</c:ser>"
+        )
+    return (
+        f'<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        f'<c:chartSpace xmlns:c="{C_NS}">'
+        f'<c:chart>{title_xml}<c:plotArea>{series_xml}</c:plotArea></c:chart>'
+        "</c:chartSpace>"
+    )
+
+
+PPTX_REL = "slides/Acme Overview.pptx"
+
+
+def make_pptx(root):
+    """A two-slide deck: slide 1 has title+body text; slide 2 has speaker notes
+    and a chart with series/categories but also numeric values (excluded)."""
+    deck_path = root / "slides" / "Acme Overview.pptx"
+    deck_path.parent.mkdir(parents=True, exist_ok=True)
+
+    slide2_chart = _pptx_chart(
+        title="Pipeline Traffic",
+        series=["Inbound", "Outbound"],
+        categories=["Jan", "Feb"],
+        numeric_vals=[1000, 2000],      # numeric values MUST NOT appear in sidecar
+    )
+    parts = {
+        "ppt/presentation.xml": _pptx_presentation(["rId1", "rId2"]),
+        "ppt/_rels/presentation.xml.rels": _pptx_prs_rels(
+            "slides/slide1.xml", "slides/slide2.xml"),
+        "ppt/slides/slide1.xml": _pptx_slide(
+            title="Acme Integration Overview",
+            body_paras=["Key components of the Acme telemetry system."]),
+        "ppt/slides/slide2.xml": _pptx_slide(title="Results"),
+        "ppt/slides/_rels/slide2.xml.rels": _pptx_slide_rels(
+            ("rId10", "notesSlide", "../noteSlides/notesSlide2.xml"),
+            ("rId20", "chart", "../charts/chart1.xml"),
+        ),
+        "ppt/noteSlides/notesSlide2.xml": _pptx_notes(
+            "Remember: pipeline latency SLA is 200ms."),
+        "ppt/charts/chart1.xml": slide2_chart,
+    }
+    with zipfile.ZipFile(deck_path, "w") as z:
+        z.writestr("[Content_Types].xml", PPTX_CT)
+        for member, data in parts.items():
+            z.writestr(member, data)
+    return deck_path
+
+
+# --------------------------------------------------------------------------- #
+# pptx parse
+# --------------------------------------------------------------------------- #
+def test_pptx_parse_document_recorded(tmp_path):
+    docs = tmp_path / "docs"
+    make_pptx(docs)
+    d = office.parse_office(docs)
+    by_rel = {doc.rel: doc for doc in d.documents}
+    assert PPTX_REL in by_rel
+    rec = by_rel[PPTX_REL]
+    assert rec.doc_type == "pptx"
+    assert d.errors == [] and d.skipped == []
+
+
+def test_pptx_doc_types_in_summary(tmp_path):
+    docs = tmp_path / "docs"
+    make_docs_dir(docs.parent)   # adds docx + xlsx into docs-upload
+    make_pptx(docs)
+    all_docs_dir = tmp_path / "all"
+    all_docs_dir.mkdir()
+    import shutil
+    shutil.copytree(docs.parent / "docs-upload", all_docs_dir / "word_excel",
+                    dirs_exist_ok=True)
+    shutil.copytree(docs, all_docs_dir / "pptx_dir", dirs_exist_ok=True)
+    d = office.parse_office(all_docs_dir)
+    s = d.summary()
+    assert "pptx" in s["doc_types"]
+    assert s["doc_types"]["pptx"] >= 1
+
+
+# --------------------------------------------------------------------------- #
+# pptx ingest — three artifacts
+# --------------------------------------------------------------------------- #
+def test_pptx_raw_ku_body_byte_identical(tmp_path):
+    """The raw KU body for a pptx file must be byte-identical to the original."""
+    docs = tmp_path / "docs"
+    deck = make_pptx(docs)
+    lib = Librarian(Store(tmp_path / "mem"))
+    office.ingest_office(lib, docs, "dev", "ingest pptx presentation")
+    original = deck.read_bytes()
+    assert lib.read_body(f"docs:{PPTX_REL}") == original
+
+
+def test_pptx_sidecar_contains_slide_title_and_body(tmp_path):
+    docs = tmp_path / "docs"
+    make_pptx(docs)
+    lib = Librarian(Store(tmp_path / "mem"))
+    office.ingest_office(lib, docs, "dev", "ingest pptx presentation")
+    text = lib.read_body(f"docs:{PPTX_REL}#text").decode("utf-8")
+    # slide 1 title and body text appear in sidecar
+    assert "Acme Integration Overview" in text
+    assert "Acme telemetry system" in text
+
+
+def test_pptx_sidecar_contains_speaker_notes(tmp_path):
+    docs = tmp_path / "docs"
+    make_pptx(docs)
+    lib = Librarian(Store(tmp_path / "mem"))
+    office.ingest_office(lib, docs, "dev", "ingest pptx presentation")
+    text = lib.read_body(f"docs:{PPTX_REL}#text").decode("utf-8")
+    assert "pipeline latency SLA" in text
+
+
+def test_pptx_sidecar_contains_chart_labels_not_numeric_values(tmp_path):
+    """Chart series/category labels appear in the sidecar; numeric values do not."""
+    docs = tmp_path / "docs"
+    make_pptx(docs)
+    lib = Librarian(Store(tmp_path / "mem"))
+    office.ingest_office(lib, docs, "dev", "ingest pptx presentation")
+    text = lib.read_body(f"docs:{PPTX_REL}#text").decode("utf-8")
+    assert "Inbound" in text and "Outbound" in text   # series names
+    assert "Jan" in text and "Feb" in text             # category labels
+    assert "1000" not in text and "2000" not in text   # numeric values excluded
+
+
+def test_pptx_graph_contains_slide_and_chart_nodes(tmp_path):
+    docs = tmp_path / "docs"
+    make_pptx(docs)
+    lib = Librarian(Store(tmp_path / "mem"))
+    office.ingest_office(lib, docs, "dev", "ingest pptx presentation")
+    g = office.load_graph(lib)
+    node_types = {n["type"] for n in g["nodes"]}
+    assert "slide" in node_types
+    assert "chart" in node_types
+
+
+def test_pptx_entities_always_empty(tmp_path):
+    """HARD RULE: pptx KUs carry NO entities."""
+    docs = tmp_path / "docs"
+    make_pptx(docs)
+    lib = Librarian(Store(tmp_path / "mem"))
+    office.ingest_office(lib, docs, "dev", "ingest pptx presentation")
+    pptx_kus = [ku for ku in lib.manifest.all()
+                if ku.source == "docs" and "pptx" in ku.id]
+    assert len(pptx_kus) >= 1
+    assert all(ku.entities == [] for ku in pptx_kus)

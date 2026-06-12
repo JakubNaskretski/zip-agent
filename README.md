@@ -138,11 +138,11 @@ and ask the agent to digest — same preview → confirm → ingest flow
 (unchanged items are skipped) and a partial collection is flagged with an
 `.incomplete` sentinel, never silently pruned.
 
-### 5. Feed it documents (Word / Excel)
+### 5. Feed it documents (Word / Excel / PowerPoint)
 
-Zip a folder of `.docx` / `.xlsx` / `.xlsm` documents (specs, mapping
-workbooks), upload it, and ask the agent to digest — same preview → confirm →
-ingest → rebuild-indexes flow:
+Zip a folder of `.docx` / `.xlsx` / `.xlsm` / `.pptx` / `.pptm` documents
+(specs, mapping workbooks, slide decks), upload it, and ask the agent to digest
+— same preview → confirm → ingest → rebuild-indexes flow:
 
 ```python
 from librarian.digest import office
@@ -153,13 +153,16 @@ rebuild_indexes(lib, author, "rebuild after docs digest")   # separate execution
 
 Per document the agent keeps three things: the **original file** as a raw KU
 (re-openable, re-parseable on demand), a **plain-text sidecar** (`.txt` next to
-it) holding the extracted section text and sheet/table/column names — that is
-what full-text search hits — and a contained **structure graph** (heading tree,
-sheets, declared tables; heuristic guesses are marked as such, structure is
-never fabricated). Confidentiality by policy: cell values, formula bodies and
+it) holding the extracted text — section titles and body text for Word,
+sheet/table/column names for Excel, slide titles + body text + speaker notes +
+chart series/category labels for PowerPoint — that is what full-text search
+hits — and a contained **structure graph** (Word heading tree; Excel sheets and
+declared tables; PowerPoint slides, optional declared sections, and charts;
+heuristic guesses are marked as such, structure is never fabricated).
+Confidentiality by policy: cell values, formula bodies, numeric chart data and
 author names never enter the graph or the sidecar, and document prose is never
-entity-bridged. Legacy binary `.doc` / `.xls` / `.xlsb` are not parsed (convert
-them first); `.xlsm` is parsed with macro content ignored.
+entity-bridged. Legacy binary `.doc` / `.xls` / `.xlsb` / `.ppt` are not parsed
+(convert them first); `.xlsm` / `.pptm` are parsed with macro content ignored.
 
 ### 6. Ask questions
 

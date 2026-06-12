@@ -1,9 +1,10 @@
 """Office-docs digest — graph-builder-backed adapter for ``.docx`` / ``.xlsx`` /
-``.xlsm`` uploads.
+``.xlsm`` / ``.pptx`` / ``.pptm`` uploads.
 
 Input is a directory of office documents the user uploaded (any layout; the
 vendored extractors' ``handles()`` decide what is a document — legacy binary
-``.doc`` / ``.xls`` / ``.xlsb`` are rejected by the engine and simply skipped).
+``.doc`` / ``.xls`` / ``.xlsb`` / ``.ppt`` are rejected by the engine and simply
+skipped).
 The §14.1 ``parse → to_kus → ingest`` contract, same as jira/mule/graphbuilder,
 with one docs-specific twist — THREE artifacts per document:
 
@@ -14,17 +15,19 @@ with one docs-specific twist — THREE artifacts per document:
     uploaded file on demand; no base64, no lossy decode.
   * one **plain-text sidecar KU** (``docs:<relpath>#text``, stored next to the
     file as ``<relpath>.txt``) holding the extracted plaintext: section titles +
-    section body text for Word, sheet/table names + column names for Excel.
-    THIS is the document's full-text-search surface — FTS indexes it directly,
-    so a prose question hits documents without anyone re-parsing a binary.
-    (A parent section's text spans its subsections — see the engine — so nested
-    text may repeat in the sidecar; harmless for FTS, and the raw file remains
-    the fidelity copy.) A document with no extractable text gets no sidecar.
+    section body text for Word; sheet/table names + column names for Excel;
+    slide titles + body text + speaker notes + chart series/category labels for
+    PowerPoint. THIS is the document's full-text-search surface — FTS indexes it
+    directly, so a prose question hits documents without anyone re-parsing a
+    binary. (A parent section's text spans its subsections — see the engine — so
+    nested text may repeat in the sidecar; harmless for FTS, and the raw file
+    remains the fidelity copy.) A document with no extractable text gets no
+    sidecar.
   * one **structured graph KU** (``docs:graph/docs``) — the contained intra-docs
-    graph (docfile/docsection/sheet/datatable, ``contains``/``child-of``)
-    serialized via ``persistence.to_json(redact_text=True)``: section body text
-    NEVER appears inline in the graph JSON (it lives in the sidecars; redacted
-    nodes carry ``text_redacted``).
+    graph (docfile/docsection/sheet/datatable/slide/chart, ``contains``/
+    ``child-of``) serialized via ``persistence.to_json(redact_text=True)``):
+    section body text and slide text/notes NEVER appear inline in the graph JSON
+    (they live in the sidecars; redacted nodes carry ``text_redacted``).
 
 Containment rules (owner decisions, 2026-06-12 — the prose rule, hardened):
 
@@ -123,10 +126,12 @@ def _office_extractors():
 
 def _plaintext(nodes) -> str:
     """The sidecar body, assembled from the extracted nodes in document order:
-    Word section titles + body text (the docfile's preamble/flat text first),
-    Excel sheet/table names + column names. Names and the engine's deliberate
-    text captures only — cell values / formulas / authors never reach the
-    extractor output, so they cannot reach the sidecar either."""
+    Word section titles + body text (the docfile's preamble/flat text first);
+    Excel sheet/table names + column names; PowerPoint slide titles + body text
+    + speaker notes + chart series/category labels. Names and the engine's
+    deliberate text captures only — cell values / formulas / numeric data values
+    / authors never reach the extractor output, so they cannot reach the sidecar
+    either."""
     lines: list = []
     for n in nodes:
         ntype = n.get("type")
@@ -150,6 +155,20 @@ def _plaintext(nodes) -> str:
             lines.append(f"{kind}: {n.get('label') or ''}")
             if n.get("columns"):
                 lines.append("Columns: " + ", ".join(n["columns"]))
+        elif ntype == "slide":
+            lines.append(f"Slide: {n.get('label') or ''}")
+            if n.get("text"):
+                lines.append(n["text"])
+            if n.get("notes"):
+                lines.append(n["notes"])
+            if n.get("columns"):
+                lines.append("Columns: " + ", ".join(n["columns"]))
+        elif ntype == "chart":
+            lines.append(f"Chart: {n.get('label') or ''}")
+            if n.get("series"):
+                lines.append("Series: " + ", ".join(n["series"]))
+            if n.get("categories"):
+                lines.append("Categories: " + ", ".join(n["categories"]))
     return "\n".join(line for line in lines if line).strip()
 
 

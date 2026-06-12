@@ -85,7 +85,7 @@ What the Librarian guarantees (so you don't have to police it yourself): one man
 ## 4. Operations
 
 - **ASK** — answer a question. Classify it, route to the right retrieval mode (entity bridge / graph / full-text), expand minimally, synthesize with cited KU ids + a confidence tier. Full routing in **§4.1**. Never dump files into context.
-- **DIGEST** — ingest a data ZIP the user uploaded. Unzip it, detect the source by layout (`force-app/` → Salesforce; `src/main/mule/` or `pom.xml` + `mule-artifact.json` → Mule; `<PROJECT>/<KEY>.issue.json` → Jira dump; `<SPACE>/<id>.page.json` → Confluence dump, both from the §7 collectors; `.docx`/`.xlsx`/`.xlsm` files → office documents), **parse first (pure — nothing committed), show the summary as the digest report, get confirmation, then ingest**:
+- **DIGEST** — ingest a data ZIP the user uploaded. Unzip it, detect the source by layout (`force-app/` → Salesforce; `src/main/mule/` or `pom.xml` + `mule-artifact.json` → Mule; `<PROJECT>/<KEY>.issue.json` → Jira dump; `<SPACE>/<id>.page.json` → Confluence dump, both from the §7 collectors; `.docx`/`.xlsx`/`.xlsm`/`.pptx`/`.pptm` files → office documents), **parse first (pure — nothing committed), show the summary as the digest report, get confirmation, then ingest**:
 
   ```python
   from librarian.digest import graphbuilder as sf, mule, jira, confluence, office
@@ -104,7 +104,7 @@ What the Librarian guarantees (so you don't have to police it yourself): one man
 
   Pass `progress=print` on any big digest (it prints a one-line count every 1000 files/KUs plus a compact final line, so a killed call shows where it stopped — see "Long operations" below); the Mule corpus is small enough not to need it.
 
-  Re-ingesting unchanged content is a no-op (the report shows new/changed/unchanged). Absence in a scoped re-ingest is **not** deletion — flag it, never auto-retire. Surface `unresolved`/`errors`/`skipped` from the digest, never swallow them. **After a digest, run `rebuild_indexes(lib, author, "rebuild indexes after <source> digest")`** (`from librarian import rebuild_indexes`) so search reflects the new data. Jira/Confluence raw KUs hold each issue/page dump verbatim (`lib.read_body("jira:<PROJ>/<KEY>")` is the full detail); their `entities` carry structured ids only (issue key / space key + page id) — never extract prose names into the bridge. Office documents get THREE artifacts each: the raw KU `docs:<path>` holding the ORIGINAL file bytes (`lib.read_body` returns them verbatim — re-open/re-parse on demand), a plain-text sidecar `docs:<path>#text` that FTS indexes (section titles + text, sheet/table/column names), and the contained `docs:graph/docs` structure graph; their `entities` are ALWAYS empty — filenames, titles, headings and column names never enter the bridge.
+  Re-ingesting unchanged content is a no-op (the report shows new/changed/unchanged). Absence in a scoped re-ingest is **not** deletion — flag it, never auto-retire. Surface `unresolved`/`errors`/`skipped` from the digest, never swallow them. **After a digest, run `rebuild_indexes(lib, author, "rebuild indexes after <source> digest")`** (`from librarian import rebuild_indexes`) so search reflects the new data. Jira/Confluence raw KUs hold each issue/page dump verbatim (`lib.read_body("jira:<PROJ>/<KEY>")` is the full detail); their `entities` carry structured ids only (issue key / space key + page id) — never extract prose names into the bridge. Office documents get THREE artifacts each: the raw KU `docs:<path>` holding the ORIGINAL file bytes (`lib.read_body` returns them verbatim — re-open/re-parse on demand), a plain-text sidecar `docs:<path>#text` that FTS indexes (Word: section titles + text; Excel: sheet/table/column names; PowerPoint: slide titles + body text + speaker notes + chart series/category labels), and the contained `docs:graph/docs` structure graph; their `entities` are ALWAYS empty — filenames, titles, headings and column names never enter the bridge.
 - **GROW** — author a curated KU (glossary term, cross-source mapping, decision, lesson) when you've confirmed something worth keeping. Always link it `derived-from` the raw KUs it rests on; if those later change, the Librarian flags your note `needs-review`. The shape that validates:
 
   ```python
@@ -270,7 +270,7 @@ DIGEST    sf.digest()/mule.parse_mule()/jira.parse_jira()/confluence.parse_confl
           office.parse_office() preview → confirm → sf.ingest_salesforce()/mule.ingest_mule()/
           jira.ingest_jira()/confluence.ingest_confluence()/office.ingest_office()
           → rebuild_indexes(lib, author, why)
-          (jira/confluence dumps come from the §7 collectors; office = .docx/.xlsx/.xlsm uploads)
+          (jira/confluence dumps come from the §7 collectors; office = .docx/.xlsx/.xlsm/.pptx/.pptm uploads)
 DOCS      raw file bytes: lib.read_body("docs:<path>") · searchable text: docs:<path>#text (FTS)
           · structure: office.load_graph(lib) · entities ALWAYS empty (prose never bridged)
 GROW      lib.begin(author, why).add_ku(KnowledgeUnit(id="curated:…", kind="curated-note",

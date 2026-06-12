@@ -1,17 +1,19 @@
-"""Office-document parsers — turn ``.docx`` / ``.xlsx`` files into typed dataclasses.
+"""Office-document parsers — turn ``.docx`` / ``.xlsx`` / ``.pptx`` files into
+typed dataclasses.
 
 ``docs`` is its own SEPARATE source (the fifth, after Salesforce / Confluence /
 Jira / MuleSoft): stdlib-only ``zipfile`` + ``xml.etree`` over the OOXML parts,
 with the parser -> dataclass split mirroring :mod:`graphbuilder.salesforce`. The
-extractors (``extractors/docx.py``, ``extractors/xlsx.py``) turn these shapes
-into nodes/edges.
+extractors (``extractors/docx.py``, ``extractors/xlsx.py``,
+``extractors/pptx.py``) turn these shapes into nodes/edges.
 
 Structure detection is TIERED — heterogeneous real-world documents must never be
 guessed at uniformly:
 
   T1 DECLARED   (trusted; the default)  Word ``w:pStyle`` Heading1-9 / Title and
       an explicit ``w:outlineLvl``; Excel Table parts (``xl/tables/*.xml`` — the
-      header row is *declared* there, not guessed).
+      header row is *declared* there, not guessed); PowerPoint ``p14:sectionLst``
+      extension sections (the ``extLst`` inside ``p:sldIdLst``).
   T2 HEURISTIC  (emitted with ``confidence: "heuristic"``, mirroring the joins'
       via/confidence)  Word bold-short-paragraph sections, applied ONLY when the
       document declares zero T1 headings (tiers never mix in one text flow);
@@ -22,7 +24,8 @@ guessed at uniformly:
 
 Confidentiality (hard rules, sharpening the engine-wide names-only policy):
 NO cell values, NO formula bodies, NO author names. What may enter the graph:
-names/labels/headers (sheet, table, column, defined names, heading titles) and —
+names/labels/headers (sheet, table, column, defined names, heading titles,
+slide titles, slide body text, speaker notes, chart/series/category names) and —
 the one deliberate content capture, like Confluence page bodies — Word section
 text. References detected in that text (Jira keys, ``X__c`` API names, URLs)
 become ATTRS only, never edges (domain isolation, same as Confluence
@@ -619,4 +622,420 @@ def parse_xlsx(path) -> XlsxDoc:
     doc.jira_keys = refs.get("jira_keys", [])
     doc.sf_names = refs.get("sf_names", [])
     doc.urls = list(dict.fromkeys(doc.urls + refs.get("urls", [])))
+    return doc
+
+
+# --------------------------------------------------------------------------- #
+# PowerPoint (.pptx / .pptm) — parsed shapes
+# --------------------------------------------------------------------------- #
+@dataclass
+class PptxChart:
+    title: str = ""                             # chart title text (may be "")
+    series: list = field(default_factory=list)  # series name strings (c:ser/c:tx)
+    categories: list = field(default_factory=list)  # category label strings (c:cat)
+    # NOTE: numeric value caches (c:val/numCache) are DELIBERATELY EXCLUDED —
+    # names/labels only, consistent with the engine posture that data values
+    # never enter the graph.
+
+
+@dataclass
+class PptxSlide:
+    ordinal: int = 0                            # 1-based presentation order
+    title: str = ""                             # placeholder type "title" / "ctrTitle"
+    text: str = ""                              # all other a:t runs, paragraph-joined
+    notes: str = ""                             # speaker-notes text (from notesSlide rel)
+    columns: list = field(default_factory=list) # first-row cells of any a:tbl (header names)
+    charts: list = field(default_factory=list)  # list[PptxChart]
+
+
+@dataclass
+class PptxSection:
+    name: str                                   # section name from p14:section/@name
+    ordinal: int = 0                            # 1-based deck order
+    slide_ordinals: list = field(default_factory=list)  # which slides belong here
+
+
+@dataclass
+class PptxDoc:
+    file_id: str = ""
+    structure: str = "none"     # "declared" (p14 sections present) | "none"
+    title: str = ""             # docProps dc:title (never author)
+    modified: str = ""          # docProps dcterms:modified (ISO string)
+    slides: list = field(default_factory=list)    # list[PptxSlide], presentation order
+    sections: list = field(default_factory=list)  # list[PptxSection]; [] when no sections
+    urls: list = field(default_factory=list)
+    jira_keys: list = field(default_factory=list)
+    sf_names: list = field(default_factory=list)
+
+
+# ---- PPTX helpers ---------------------------------------------------------- #
+
+_RELS_NS = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
+
+
+def _rel_id(el) -> str:
+    """The ``r:id`` relationship id from an element whose attribute is stored as
+    ``{http://…/officeDocument/2006/relationships}id``.  Falls back to scanning
+    all attributes for one whose local name is ``id`` and whose value starts with
+    ``rId`` (a common convention) — never the bare numeric ``id`` attribute."""
+    full_key = f"{{{_RELS_NS}}}id"
+    if full_key in el.attrib:
+        return el.attrib[full_key]
+    # fallback: any namespaced attr whose local name is "id" and looks like rId*
+    for k, v in el.attrib.items():
+        ln = k.rsplit("}", 1)[-1]
+        if ln == "id" and v.startswith("rId"):
+            return v
+    return ""
+
+
+def _pptx_text_runs(root) -> list:
+    """All ``a:t`` text runs in element order. Returns a list of strings
+    (individual run texts — callers join with paragraph logic)."""
+    return [(el.text or "").strip() for el in root.iter()
+            if local_name(el.tag) == "t"]
+
+
+def _pptx_paragraphs(root) -> list:
+    """Each ``a:p`` paragraph under *root* as a single string (its ``a:t``
+    runs concatenated). Empty paragraphs are kept as "" so the caller can
+    join on ``\\n`` faithfully."""
+    paras = []
+    for para in root.iter():
+        if local_name(para.tag) != "p":
+            continue
+        # collect only direct a:r/a:t and a:fld/a:t runs inside this paragraph
+        txt = ""
+        for child_el in para:
+            ln = local_name(child_el.tag)
+            if ln in ("r", "fld"):
+                for t_el in child_el:
+                    if local_name(t_el.tag) == "t":
+                        txt += (t_el.text or "")
+        paras.append(txt.strip())
+    return paras
+
+
+def _pptx_table_columns(root) -> list:
+    """First-row cell texts of the FIRST ``a:tbl`` table found anywhere under
+    *root* — header NAMES only (data rows never enter the graph). Empty cells
+    are dropped. Mirrors ``_table_columns`` for Word tables."""
+    # find first tbl
+    tbl = next((el for el in root.iter() if local_name(el.tag) == "tbl"), None)
+    if tbl is None:
+        return []
+    # first tr
+    tr = next((el for el in tbl.iter() if local_name(el.tag) == "tr"), None)
+    if tr is None:
+        return []
+    cols = []
+    for tc in (c for c in tr if local_name(c.tag) == "tc"):
+        txt = "".join(
+            (t.text or "") for t in tc.iter() if local_name(t.tag) == "t"
+        ).strip()
+        if txt:
+            cols.append(txt)
+    return cols
+
+
+def _parse_chart_part(data: bytes) -> PptxChart:
+    """Parse one chart XML part: title text + series names + category string
+    labels. Numeric caches (c:val / c:numCache) are never read."""
+    root = _xml_root(data)
+
+    # chart title — inside c:chart/c:title
+    chart_title = ""
+    for el in root.iter():
+        if local_name(el.tag) == "title":
+            runs = [
+                (t.text or "").strip() for t in el.iter() if local_name(t.tag) == "t"
+            ]
+            chart_title = " ".join(r for r in runs if r).strip()
+            break
+
+    series: list = []
+    categories: list = []
+
+    for ser in (el for el in root.iter() if local_name(el.tag) == "ser"):
+        # series name: c:tx / c:strRef / c:f (formula) or c:strCache/c:pt/c:v
+        tx = next((c for c in ser if local_name(c.tag) == "tx"), None)
+        if tx is not None:
+            # try strRef cached string first
+            for pt in tx.iter():
+                if local_name(pt.tag) == "v":
+                    name = (pt.text or "").strip()
+                    if name and name not in series:
+                        series.append(name)
+                    break
+
+        # category labels: c:cat / c:strRef / c:strCache or c:lvl  --------- #
+        cat = next((c for c in ser if local_name(c.tag) == "cat"), None)
+        if cat is not None:
+            for pt in cat.iter():
+                if local_name(pt.tag) == "v":
+                    lbl = (pt.text or "").strip()
+                    if lbl and lbl not in categories:
+                        categories.append(lbl)
+
+    # a chart with no readable text is fine — caller decides whether to keep it
+    return PptxChart(title=chart_title, series=series, categories=categories)
+
+
+def _parse_notes_part(data: bytes) -> str:
+    """All text runs from a notesSlide part, paragraph-joined."""
+    root = _xml_root(data)
+    paras = _pptx_paragraphs(root)
+    return "\n".join(p for p in paras if p).strip()
+
+
+def _parse_smartart_part(data: bytes) -> str:
+    """Harvest ``a:t`` text from a SmartArt data part (``diagrams/data*.xml``)
+    and return it joined as prose. SmartArt data parts carry the user-typed
+    label text in the same ``a:t`` element as the rest of OOXML — collect it
+    all and let the caller append it to the slide body."""
+    return " ".join(
+        (el.text or "").strip() for el in _xml_root(data).iter()
+        if local_name(el.tag) == "t" and (el.text or "").strip()
+    )
+
+
+def parse_pptx(path) -> PptxDoc:
+    """Parse one ``.pptx`` / ``.pptm`` into a :class:`PptxDoc` (raises on a
+    corrupt zip or malformed XML — the build records it in ``errors``).
+
+    Slide ORDER comes from ``ppt/presentation.xml`` ``p:sldIdLst`` r:id refs
+    resolved through ``ppt/_rels/presentation.xml.rels``. PowerPoint sections
+    (``p14:sectionLst`` inside the ``extLst``) are read when present: each
+    section has a name and a list of member slide ids (``p14:sldId`` r:id).
+    Sections present → structure "declared"; absent → "none" (slides are still
+    emitted — they are inherent structure — but no section nodes are
+    fabricated).
+
+    Per slide: title placeholder (type "title" / "ctrTitle"), body text (all
+    other ``a:t`` runs, paragraph-joined, excluding title), table first-row
+    columns (header names only, data rows never captured), speaker notes (via
+    the slide's notesSlide relationship), SmartArt body text appended to slide
+    body, charts (title + series names + category labels, no numeric values).
+
+    Author names and numeric data values are NEVER read. ``detect_refs`` scans
+    the full text surface (doc title, slide titles, slide body, notes, chart
+    labels, table columns) for Jira keys / ``X__c`` names / URLs."""
+    data = Path(path).read_bytes()
+    doc = PptxDoc(file_id=file_id(data))
+
+    with zipfile.ZipFile(io.BytesIO(data)) as zf:
+        names = set(zf.namelist())
+
+        if "docProps/core.xml" in names:
+            _core_props(zf.read("docProps/core.xml"), doc)
+
+        # --- resolve the presentation-level rels (slide parts + order) ------- #
+        prs_rels: dict = {}          # rId -> resolved part name
+        prs_rels_by_type: dict = {}  # type-suffix -> [(rId, part)]
+        if "ppt/_rels/presentation.xml.rels" in names:
+            for rid, rtype, target, mode in _relationships(
+                    zf.read("ppt/_rels/presentation.xml.rels")):
+                if mode == "External" or not target:
+                    continue
+                part = _resolve_part("ppt", target)
+                prs_rels[rid] = part
+                suffix = rtype.rsplit("/", 1)[-1]
+                prs_rels_by_type.setdefault(suffix, []).append((rid, part))
+
+        # --- slide order from p:sldIdLst ------------------------------------ #
+        prs_root = _xml_root(zf.read("ppt/presentation.xml"))
+
+        # gather r:id attrs from p:sldId children of p:sldIdLst.
+        # IMPORTANT: p:sldId has TWO "id" attributes — a plain numeric `id`
+        # (the slide's unique integer id within the presentation) and a
+        # namespace-qualified `r:id` (the relationship id linking to the slide
+        # part). We need the relationship id, not the numeric one.
+        slide_rids: list = []        # in document order
+        for el in prs_root.iter():
+            if local_name(el.tag) == "sldIdLst":
+                for sld in el:
+                    if local_name(sld.tag) == "sldId":
+                        rid = _rel_id(sld)
+                        if rid:
+                            slide_rids.append(rid)
+                break
+
+        # map rId -> ordinal (1-based presentation order)
+        rid_to_ordinal: dict = {}
+        for ordinal, rid in enumerate(slide_rids, 1):
+            rid_to_ordinal[rid] = ordinal
+
+        # --- p14 sections (optional; namespace-agnostic) -------------------- #
+        # The p14:sectionLst element lives inside p:sldIdLst/p:extLst/p:ext
+        # (or sometimes directly under the presentation extLst) — use the
+        # local-name helpers so we don't depend on any specific namespace prefix.
+        sections_raw: list = []   # [(section_name, [slide_rid, ...])]
+        for ext in prs_root.iter():
+            if local_name(ext.tag) == "sectionLst":
+                for sec in ext:
+                    if local_name(sec.tag) != "section":
+                        continue
+                    sec_name = _attr(sec, "name") or ""
+                    member_rids: list = []
+                    for sldId in sec.iter():
+                        if local_name(sldId.tag) == "sldId":
+                            rid = _rel_id(sldId)
+                            if rid:
+                                member_rids.append(rid)
+                    sections_raw.append((sec_name, member_rids))
+                break
+
+        if sections_raw:
+            doc.structure = "declared"
+            for s_ord, (sec_name, member_rids) in enumerate(sections_raw, 1):
+                sec_slide_ordinals = [
+                    rid_to_ordinal[r] for r in member_rids if r in rid_to_ordinal
+                ]
+                doc.sections.append(PptxSection(
+                    name=sec_name,
+                    ordinal=s_ord,
+                    slide_ordinals=sec_slide_ordinals,
+                ))
+
+        # --- per-slide extraction ------------------------------------------- #
+        slides_by_ordinal: dict = {}
+
+        for rid, ordinal in rid_to_ordinal.items():
+            slide_part = prs_rels.get(rid)
+            if not slide_part or slide_part not in names:
+                # still emit an empty slide so ordinal stays stable
+                slides_by_ordinal[ordinal] = PptxSlide(ordinal=ordinal)
+                continue
+
+            slide_root = _xml_root(zf.read(slide_part))
+            slide_base = posixpath.dirname(slide_part)
+            slide_rels_part = posixpath.join(
+                slide_base, "_rels",
+                posixpath.basename(slide_part) + ".rels"
+            )
+
+            # resolve slide-level rels
+            slide_rels: list = []
+            if slide_rels_part in names:
+                slide_rels = _relationships(zf.read(slide_rels_part))
+
+            # title: the shape whose p:ph type is "title" or "ctrTitle"
+            title_text = ""
+            body_paras: list = []
+
+            for sp in slide_root.iter():
+                if local_name(sp.tag) != "sp":
+                    continue
+                # find ph element
+                ph = next(
+                    (el for el in sp.iter() if local_name(el.tag) == "ph"), None
+                )
+                ph_type = _attr(ph, "type") if ph is not None else ""
+                is_title = ph_type in ("title", "ctrTitle")
+                # collect a:p paragraphs from this shape's txBody
+                tx = next(
+                    (el for el in sp if local_name(el.tag) == "txBody"), None
+                )
+                if tx is None:
+                    continue
+                for para in tx:
+                    if local_name(para.tag) != "p":
+                        continue
+                    run_text = ""
+                    for child_el in para:
+                        if local_name(child_el.tag) in ("r", "fld"):
+                            for t_el in child_el:
+                                if local_name(t_el.tag) == "t":
+                                    run_text += (t_el.text or "")
+                    run_text = run_text.strip()
+                    if not run_text:
+                        continue
+                    if is_title and not title_text:
+                        title_text = run_text
+                    elif not is_title:
+                        body_paras.append(run_text)
+
+            # tables: first-row columns from the first a:tbl in the slide
+            columns = _pptx_table_columns(slide_root)
+
+            # SmartArt: slide rels pointing at diagrams/data*.xml
+            smartart_texts: list = []
+            for _rid, rtype, target, mode in slide_rels:
+                if mode == "External" or not target:
+                    continue
+                rtype_suffix = rtype.rsplit("/", 1)[-1]
+                if rtype_suffix == "diagramData":
+                    diag_part = _resolve_part(slide_base, target)
+                    if diag_part in names:
+                        sa_text = _parse_smartart_part(zf.read(diag_part))
+                        if sa_text:
+                            smartart_texts.append(sa_text)
+
+            # charts
+            charts: list = []
+            chart_n = 0
+            for _rid, rtype, target, mode in slide_rels:
+                if mode == "External" or not target:
+                    continue
+                if not rtype.endswith("/chart"):
+                    continue
+                chart_part = _resolve_part(slide_base, target)
+                if chart_part not in names:
+                    continue
+                ch = _parse_chart_part(zf.read(chart_part))
+                # a chart with no readable text at all is discarded
+                if ch.title or ch.series or ch.categories:
+                    chart_n += 1
+                    charts.append(ch)
+
+            # speaker notes via notesSlide relationship
+            notes_text = ""
+            for _rid, rtype, target, mode in slide_rels:
+                if mode == "External" or not target:
+                    continue
+                if rtype.endswith("/notesSlide"):
+                    notes_part = _resolve_part(slide_base, target)
+                    if notes_part in names:
+                        notes_text = _parse_notes_part(zf.read(notes_part))
+                    break
+
+            # assemble body text: shapes + smartart appended
+            all_body = body_paras + smartart_texts
+            body_text = "\n".join(all_body)
+
+            slides_by_ordinal[ordinal] = PptxSlide(
+                ordinal=ordinal,
+                title=title_text,
+                text=body_text,
+                notes=notes_text,
+                columns=columns,
+                charts=charts,
+            )
+
+        # emit slides in ordinal order
+        doc.slides = [slides_by_ordinal[o]
+                      for o in sorted(slides_by_ordinal)]
+
+    # detected refs over the full text surface (doc title, slide titles,
+    # slide body, notes, chart labels, table columns) — attrs only, never edges
+    ref_parts: list = []
+    if doc.title:
+        ref_parts.append(doc.title)
+    for sl in doc.slides:
+        if sl.title:
+            ref_parts.append(sl.title)
+        if sl.text:
+            ref_parts.append(sl.text)
+        if sl.notes:
+            ref_parts.append(sl.notes)
+        ref_parts.extend(sl.columns)
+        for ch in sl.charts:
+            if ch.title:
+                ref_parts.append(ch.title)
+            ref_parts.extend(ch.series)
+            ref_parts.extend(ch.categories)
+    refs = detect_refs("\n".join(ref_parts))
+    doc.jira_keys = refs.get("jira_keys", [])
+    doc.sf_names = refs.get("sf_names", [])
+    doc.urls = refs.get("urls", [])
     return doc

@@ -54,15 +54,20 @@ NODE_TYPES = {
     "propertyfile", "propertykey", "globalconfig",
     "pomdependency", "muleartifactdescriptor",
     # ---- Office documents source (a fifth, SEPARATE graph; see graphbuilder/office
-    # + extractors/docx + extractors/xlsx). Names/labels/headers ONLY — cell values,
-    # formula bodies and author names never enter the graph; `docsection` body text
-    # is the one content capture (like Confluence page bodies). Structure detection
+    # + extractors/docx + extractors/xlsx + extractors/pptx). Names/labels/headers
+    # ONLY — cell values, formula bodies, numeric data values and author names never
+    # enter the graph; `docsection` body text and `slide` text/notes are the
+    # deliberate content captures (like Confluence page bodies). Structure detection
     # is tiered and honest: declared (T1, trusted) / heuristic (T2, marked with a
     # `confidence` attr) / none (T3 flat — sections are never fabricated). Files are
     # content-hash keyed (`docfile/<sha1-12>`, filename as label); column headers
-    # are a `columns` ATTR on sheet/table/section nodes (a node per column is
-    # noise). Reuses `contains` / `child-of` — no new edge types. ----
+    # are a `columns` ATTR on sheet/table/section/slide nodes (a node per column is
+    # noise). Reuses `contains` / `child-of` — no new edge types.
+    # `slide`: one per PowerPoint slide (title, body text, notes, columns from the
+    # first table). `chart`: one per embedded chart (series names + category labels;
+    # numeric value caches are deliberately excluded). ----
     "docfile", "docsection", "sheet", "datatable",
+    "slide", "chart",
 }
 EDGE_TYPES = {
     "field_of", "lookup", "on", "calls", "references", "touches", "uses",
