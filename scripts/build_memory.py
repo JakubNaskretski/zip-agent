@@ -34,13 +34,14 @@ _IGNORE = shutil.ignore_patterns("__pycache__", "*.pyc", "*.pyo", "*.tmp")
 # (constructor refs, instance-call resolution). Download wheels matching the
 # SANDBOX's platform/Python — e.g. for a linux x86_64 / Python 3.12 host:
 #
-#   pip download --only-binary :all: \
-#       --platform manylinux_2_34_x86_64 --platform manylinux2014_x86_64 \
+#   pip download --only-binary :all: --platform manylinux2014_x86_64 \
 #       --python-version 312 -d wheelhouse/ \
-#       "tree-sitter>=0.25,<1" "tree-sitter-language-pack>=1,<2"
+#       "tree-sitter>=0.25.2,<1" "tree-sitter-language-pack==0.13.0"
 #
-# The language pack must be >=1.x — 0.x packs expose the property-style node
-# API the engine's probe rejects (it would fall back to regex).
+# The ==0.13.0 pin is REQUIRED for offline sandboxes: the last release bundling
+# all grammars in the wheel. Pack 1.x fetches grammars from GitHub on first
+# use — impossible without network. 0.13's property-style node API is handled
+# by the engine's compatibility shim.
 #
 # (Version caps mirror the engine's `ast` extra — see vendor/README.md.)
 # Wrong-platform wheels fail the boot-time install harmlessly: the engine

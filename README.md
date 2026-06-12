@@ -60,16 +60,18 @@ python3 scripts/build_memory.py memory.zip
 linux x86_64 / Python 3.12 — not your machine's):
 
 ```bash
-python3 -m pip download --only-binary :all: \
-    --platform manylinux_2_34_x86_64 --platform manylinux2014_x86_64 \
+python3 -m pip download --only-binary :all: --platform manylinux2014_x86_64 \
     --python-version 312 -d wheelhouse/ \
-    "tree-sitter>=0.25,<1" "tree-sitter-language-pack>=1,<2"
+    "tree-sitter>=0.25.2,<1" "tree-sitter-language-pack==0.13.0"
 python3 scripts/build_memory.py --wheelhouse wheelhouse/ memory.zip
 ```
 
 Sanity check B before uploading: `unzip -l memory.zip | grep wheelhouse` must
-list the two tree-sitter wheels (the language pack must be >=1.x — older
-0.x packs expose a different node API and the engine will stay on regex). The build
+list five wheels including `tree_sitter_language_pack-0.13.0`. The 0.13 pin is
+deliberate and REQUIRED for offline sandboxes: it is the last release that
+bundles all grammars in the wheel — pack 1.x downloads grammars from GitHub on
+first use, which an offline sandbox cannot do (its node API difference is
+handled by the engine's compatibility shim either way). The build
 output also states which variant you produced. A wrong-platform wheelhouse
 degrades harmlessly at boot: the agent falls back to the regex backend,
 exactly as variant A.
