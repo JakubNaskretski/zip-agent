@@ -66,7 +66,7 @@ from graphbuilder.extractors import all_extractors as _gb_all_extractors
 from graphbuilder.resolvers import default_resolvers as _gb_default_resolvers
 
 # pin recorded in the built-in tool KU (and echoed in this module's docstring)
-_VENDORED_SHA = "d150533"   # engine main — adds label_<locale> translations
+_VENDORED_SHA = "3345524"   # engine main — AST ctor parity, case-insensitive drops
 _VENDORED_AT = "2026-06-12"
 
 GRAPH_ID = "salesforce:graph/sf"

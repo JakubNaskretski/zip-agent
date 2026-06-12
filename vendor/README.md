@@ -15,7 +15,7 @@ its always-on regex backend).
 | | |
 |---|---|
 | Source | `graph-builder` (private sibling repo) |
-| Pinned commit | `d150533` (engine `main`) |
+| Pinned commit | `3345524` (engine `main`) |
 | Pinned tip | translated display labels (`label_<locale>` attrs via partial donor nodes) + node→source `source_path` traceability, flexipage fields/actions/related-lists/page attrs, Jira envelope incl. releases/sprints/epic, Apex method signatures, Confluence ancestors/timestamps — on top of `733c202` (schema-aware resolvers) |
 | Vendored on | 2026-06-12 |
 | Scope | the `graphbuilder/` package only — no tests, no scripts |

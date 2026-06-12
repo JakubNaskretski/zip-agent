@@ -132,16 +132,32 @@ class ApexMethodResolver:
 
     kind = "apexmethod"
 
+    def __init__(self):
+        self._class_lower: set = set()
+        self._indexed_at = -1   # registry size the index was built at
+
+    def _classes(self, registry: dict) -> set:
+        # Apex is case-insensitive: `string.write()` shadowed by a declared
+        # class `String` must not be dropped. Declared (non-external) classes
+        # all exist before resolution starts (cf. ObjectResolver._tails).
+        if len(registry) != self._indexed_at:
+            self._class_lower = {
+                nid.split("/", 1)[1].lower()
+                for nid, n in registry.items()
+                if n.get("type") == "apexclass" and not n.get("external")
+            }
+            self._indexed_at = len(registry)
+        return self._class_lower
+
     def resolve(self, name: str, registry: dict):
         nid = f"apexmethod/{name}"
         hit = registry.get(nid)
         if hit is not None and not hit.get("external"):
             return nid
         qual = name.split(".", 1)[0]
-        if qual.lower() in APEX_SYSTEM_TYPES:
-            cls = registry.get(f"apexclass/{qual}")
-            if cls is None or cls.get("external"):
-                return False                       # platform call — drop
+        if qual.lower() in APEX_SYSTEM_TYPES \
+                and qual.lower() not in self._classes(registry):
+            return False                           # platform call — drop
         if nid in registry:                        # an earlier stub for this name
             return nid
         registry[nid] = {"id": nid, "type": "apexmethod", "label": name,
@@ -165,20 +181,33 @@ class ObjectResolver:
 
     def __init__(self):
         self._field_tails: set = set()
+        self._object_lower: set = set()
         self._indexed_at = -1   # registry size the index was built at
 
-    def _tails(self, registry: dict) -> set:
-        # Declared (non-external) fields all exist before resolution starts; the
-        # registry only grows by external stubs during it, so rebuilding when the
-        # size changed keeps the index correct at trivial cost (cf. PageResolver).
+    def _index(self, registry: dict):
+        # Declared (non-external) fields/objects all exist before resolution
+        # starts; the registry only grows by external stubs during it, so
+        # rebuilding when the size changed keeps the index correct at trivial
+        # cost (cf. PageResolver). Lower-cased: Apex/SOQL are case-insensitive,
+        # so the drop decision must be too — in both directions (a differently-
+        # cased field token still drops; a differently-cased declared OBJECT
+        # still protects).
         if len(registry) != self._indexed_at:
             tails: set = set()
+            objs: set = set()
             for nid, n in registry.items():
-                if n.get("type") == "field" and not n.get("external") \
-                        and "." in nid:
-                    tails.add(nid.rsplit(".", 1)[-1])
+                if n.get("external"):
+                    continue
+                if n.get("type") == "field" and "." in nid:
+                    tails.add(nid.rsplit(".", 1)[-1].lower())
+                elif n.get("type") == "object":
+                    objs.add(nid.split("/", 1)[1].lower())
             self._field_tails = tails
+            self._object_lower = objs
             self._indexed_at = len(registry)
+
+    def _tails(self, registry: dict) -> set:
+        self._index(registry)
         return self._field_tails
 
     def resolve(self, name: str, registry: dict):
@@ -186,7 +215,9 @@ class ObjectResolver:
         hit = registry.get(nid)
         if hit is not None and not hit.get("external"):
             return nid
-        if name.endswith("__c") and name in self._tails(registry):
+        low = name.lower()
+        if low.endswith("__c") and low in self._tails(registry) \
+                and low not in self._object_lower:
             return False                           # a field token, not an object
         if nid in registry:                        # an earlier stub for this name
             return nid

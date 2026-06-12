@@ -40,6 +40,87 @@ python3.11 -m venv .venv
 .venv/bin/python -m pytest          # the suite should pass
 ```
 
+## Using it — end to end
+
+Everything below assumes a clone of this repo and Python ≥ 3.11 locally; the
+agent side only needs a code-interpreter sandbox that can run Python and keep
+one file (`memory.zip`) between sessions.
+
+### 1. Build the deployable ZIP
+
+```bash
+python scripts/build_memory.py memory.zip
+# optional but recommended — bundle the tree-sitter wheels so the Apex parser
+# auto-upgrades from regex to AST inside the sandbox (match the sandbox's
+# platform/python; the exact pip-download command is in the script's docstring):
+python scripts/build_memory.py --wheelhouse /path/to/wheels memory.zip
+```
+
+### 2. Set up the agent
+
+1. Paste **`MASTER_PROMPT.md`** into the agent builder's *instructions* field —
+   it lives outside the ZIP and must be re-pasted whenever it changes.
+2. Upload `memory.zip` to the agent's workspace. That file **is** the memory:
+   back it up, version it, never hand-edit its contents.
+
+On first contact the agent runs its BOOT protocol (unpack → verify manifest →
+auto-install the wheelhouse if present) and reports what its memory contains.
+
+### 3. Feed it Salesforce
+
+Retrieve your org's metadata locally (any `force-app/` tree from
+`sf project retrieve start`), zip it, upload it, and ask the agent to digest
+it. Under the hood that is:
+
+```python
+from librarian.digest import graphbuilder as sf
+from librarian import rebuild_indexes
+rep, dg = sf.ingest_salesforce(lib, "force-app", author, "ingest org metadata")
+rebuild_indexes(lib, author, "rebuild after SF digest")
+```
+
+The agent will preview the digest (objects, classes, flows, edges, errors) and
+ask before committing. Every graph node carries `source_path` back to the file
+that defined it, and every source file is readable in full via the raw KU —
+the graph is for navigating, the source for detail.
+
+### 4. Feed it Jira and Confluence (on-prem, PAT-only)
+
+Collection runs on **your** machine — the agent never holds your token and the
+collectors are strictly read-only (GET-only against the Data Center REST APIs).
+The agent hands you the `graphbuilder/` package from its working dir (or use
+this repo's `vendor/graphbuilder/`); with the PAT in an env var — never a flag:
+
+```bash
+export JIRA_TOKEN=...          # read-only personal access token, env var ONLY
+python -c "from graphbuilder.jira.collect import collect; \
+           print(collect('https://jira.example.internal', ['PROJ'], 'jira-dump'))"
+export CONFLUENCE_TOKEN=...
+python -c "from graphbuilder.confluence.collect import collect; \
+           print(collect('https://wiki.example.internal', ['SPACE'], 'confluence-dump'))"
+```
+
+Zip the resulting `jira-dump/` / `confluence-dump/` directories, upload them,
+and ask the agent to digest — same preview → confirm → ingest flow
+(`ingest_jira` / `ingest_confluence`). Re-running a collection is incremental
+(unchanged items are skipped) and a partial collection is flagged with an
+`.incomplete` sentinel, never silently pruned.
+
+### 5. Ask questions
+
+The agent answers from the graphs + full-text search: "which flows touch
+MeterPoint__c?", "what does the Acme record page show?", "which Jira tickets
+mention this class?" — and can always open the underlying source for detail.
+Each source (Salesforce, Mule, Jira, Confluence) stays its own contained
+graph; nothing is cross-linked automatically.
+
+### 6. Let it grow
+
+Any knowledge the agent adds goes through the Librarian's transaction
+(begin → stage → preview → commit) and ends in a **new** `memory.zip` it hands
+back to you. Download it and use it as the next session's upload — that file
+is the agent's entire state.
+
 ## What the agent is for
 
 Single-project, single-tenant. Knowledge spans:

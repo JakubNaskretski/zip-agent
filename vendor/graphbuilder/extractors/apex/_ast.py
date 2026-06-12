@@ -152,7 +152,7 @@ def _ast_index_types(n, b, ctx):
             bucket = ctx.method_names_by_class.setdefault(enclosing, set())
             for i in range(body.child_count()):
                 ch = body.child(i)
-                if ch.kind() == "method_declaration":
+                if ch.kind() in ("method_declaration", "constructor_declaration"):
                     mn = _field_text(ch, "name", b)
                     if mn:
                         bucket.add(mn)
@@ -179,7 +179,9 @@ def _ast_walk_types(n, cid, top_name, b, nodes, edges, async_kinds,
             for i in range(body.child_count()):
                 ch = body.child(i)
                 k = ch.kind()
-                if k == "method_declaration":
+                if k in ("method_declaration", "constructor_declaration"):
+                    # constructors are methods named like their class (the regex
+                    # backend emits them the same way — superset parity)
                     _ast_method(ch, cid, top_name, enclosing, b, nodes,
                                 edges, async_kinds, ctx)
                 elif k in ("class_declaration", "interface_declaration"):
@@ -288,7 +290,8 @@ def _ast_method(m, cid, top_name, enclosing, b, nodes, edges,
         async_kinds.append("future")
         edges.append(raw_edge(mid, "async", "apexclass", "System.Future"))
 
-    body = m.child_by_field_name("body") or _named_child_of_kind(m, ("block",))
+    body = m.child_by_field_name("body") or _named_child_of_kind(
+        m, ("block", "constructor_body"))
     if body is None:
         return
     # First pass: collect local declarations into the symbol table (so a call
