@@ -74,13 +74,77 @@ def _ast_api_supported(parser) -> bool:
         return False
 
 
-if _APEX_PARSER is not None and not _ast_api_supported(_APEX_PARSER):
-    import logging
+# --- pre-0.25 binding shim --------------------------------------------------- #
+# A method-style facade over the property-style API of pre-0.25 bindings
+# (``.type``/``.start_byte`` properties, ``parse(bytes)`` only) — e.g. a
+# sandbox's preinstalled older tree-sitter shadowing the bundled wheel. The
+# backend then runs unchanged against either binding generation.
 
-    logging.getLogger(__name__).warning(
-        "Apex AST backend disabled: tree-sitter node API mismatch (expected the "
-        "method-style API from tree-sitter-language-pack); using the regex backend.")
-    _APEX_PARSER = None
+class _NodeShim:
+    __slots__ = ("_n",)
+
+    def __init__(self, n):
+        self._n = n
+
+    def kind(self):
+        return self._n.type
+
+    def child_count(self):
+        return self._n.child_count
+
+    def child(self, i):
+        c = self._n.children[i]
+        return None if c is None else _NodeShim(c)
+
+    def child_by_field_name(self, name):
+        c = self._n.child_by_field_name(name)
+        return None if c is None else _NodeShim(c)
+
+    def start_byte(self):
+        return self._n.start_byte
+
+    def end_byte(self):
+        return self._n.end_byte
+
+
+class _TreeShim:
+    __slots__ = ("_root",)
+
+    def __init__(self, root):
+        self._root = root
+
+    def root_node(self):
+        return _NodeShim(self._root)
+
+
+class _ParserShim:
+    __slots__ = ("_p",)
+
+    def __init__(self, p):
+        self._p = p
+
+    def parse(self, src):
+        if isinstance(src, str):
+            src = src.encode("utf-8")
+        return _TreeShim(self._p.parse(src).root_node)
+
+
+def _adapt_property_api(parser):
+    """Wrap a property-style parser in the method-style shim — or ``None`` if
+    even the wrapped form fails the probe (an unknown third API shape)."""
+    shim = _ParserShim(parser)
+    return shim if _ast_api_supported(shim) else None
+
+
+if _APEX_PARSER is not None and not _ast_api_supported(_APEX_PARSER):
+    _APEX_PARSER = _adapt_property_api(_APEX_PARSER)
+    if _APEX_PARSER is None:
+        import logging
+
+        logging.getLogger(__name__).warning(
+            "Apex AST backend disabled: tree-sitter node API matches neither the "
+            "0.25+ method style nor the pre-0.25 property style; using the regex "
+            "backend.")
 
 
 class ApexExtractor:

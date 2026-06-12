@@ -66,7 +66,7 @@ from graphbuilder.extractors import all_extractors as _gb_all_extractors
 from graphbuilder.resolvers import default_resolvers as _gb_default_resolvers
 
 # pin recorded in the built-in tool KU (and echoed in this module's docstring)
-_VENDORED_SHA = "24b2b7e"   # engine main — tree-sitter>=0.25 floor, probe docs
+_VENDORED_SHA = "3627f1c"   # engine main — dual-API AST shim
 _VENDORED_AT = "2026-06-12"
 
 GRAPH_ID = "salesforce:graph/sf"
