@@ -66,8 +66,8 @@ from graphbuilder.extractors import all_extractors as _gb_all_extractors
 from graphbuilder.resolvers import default_resolvers as _gb_default_resolvers
 
 # pin recorded in the built-in tool KU (and echoed in this module's docstring)
-_VENDORED_SHA = "d00a3f1"   # engine main — office docx/xlsx/pdf extractors
-_VENDORED_AT = "2026-06-12"
+_VENDORED_SHA = "bfd3907"   # engine main — office docx/xlsx/pdf/pptx extractors
+_VENDORED_AT = "2026-06-13"
 
 GRAPH_ID = "salesforce:graph/sf"
 GRAPH_PATH = "kb/structured/salesforce/graph.json"
