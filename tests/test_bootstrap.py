@@ -36,6 +36,39 @@ def test_noop_commit_does_not_recheckpoint(tmp_path):
     assert s.last_checkpoint_generation == gen     # no re-pack on a no-op
 
 
+def test_checkpoint_every_batches_packs_and_flushes_explicitly(tmp_path):
+    """checkpoint_every=N packs only every Nth CHANGED commit; the explicit
+    checkpoint() is the final flush for the trailing commits."""
+    memzip = tmp_path / "memory.zip"
+    s = boot(memzip, work_dir=tmp_path / "w", install_wheelhouse=False,
+             checkpoint_every=3)
+    s.begin("dev", "ingest issue one").add_ku(jira_ku(1), body="a").commit()
+    s.begin("dev", "ingest issue two").add_ku(jira_ku(2), body="b").commit()
+    assert not memzip.exists()                     # batched — not packed yet
+    s.begin("dev", "ingest issue three").add_ku(jira_ku(3), body="c").commit()
+    assert memzip.exists()                         # 3rd changed commit packs
+    assert s.last_checkpoint_generation == 3
+
+    # a no-op commit (I9) never advances the batch counter
+    s.begin("dev", "re-ingest identical content").ingest_ku(jira_ku(3), body="c").commit()
+    s.begin("dev", "ingest issue four").add_ku(jira_ku(4), body="d").commit()
+    assert s.last_checkpoint_generation == 3       # 4th changed commit pending
+    assert boot(memzip, work_dir=tmp_path / "peek", install_wheelhouse=False,
+                autosave=False).stats()["total"] == 3
+
+    s.checkpoint()                                 # the explicit final flush
+    assert s.last_checkpoint_generation == 4
+    assert boot(memzip, work_dir=tmp_path / "peek2", install_wheelhouse=False,
+                autosave=False).stats()["total"] == 4
+
+
+def test_checkpoint_every_default_keeps_per_commit_durability(tmp_path):
+    memzip = tmp_path / "memory.zip"
+    s = boot(memzip, work_dir=tmp_path / "w", install_wheelhouse=False)
+    s.begin("dev", "ingest issue one").add_ku(jira_ku(1), body="a").commit()
+    assert s.last_checkpoint_generation == 1       # packed immediately (default)
+
+
 def test_export_is_independent_of_autosave(tmp_path):
     memzip = tmp_path / "memory.zip"
     s = boot(memzip, work_dir=tmp_path / "w")
@@ -121,3 +154,48 @@ def test_boot_surfaces_wheelhouse_report(tmp_path):
     z = pack_zip(src, tmp_path / "memory.zip")
     s = boot(z, work_dir=tmp_path / "w", install_wheelhouse=True, autosave=False)
     assert s.wheelhouse == {"installed": False, "reason": "no wheelhouse bundled"}
+
+
+def test_wheelhouse_skips_pip_when_ast_stack_already_importable(tmp_path, monkeypatch):
+    """Re-boot guard: if tree_sitter + tree_sitter_language_pack already import,
+    _install_wheelhouse must not invoke pip at all."""
+    import subprocess
+    import types
+    from librarian.bootstrap import _install_wheelhouse
+
+    wh = tmp_path / "reference" / "wheelhouse"
+    wh.mkdir(parents=True)
+    (wh / "tree_sitter-0.25.2-cp310-abi3-manylinux2014_x86_64.whl").write_bytes(b"x")
+    monkeypatch.setitem(sys.modules, "tree_sitter", types.ModuleType("tree_sitter"))
+    monkeypatch.setitem(sys.modules, "tree_sitter_language_pack",
+                        types.ModuleType("tree_sitter_language_pack"))
+
+    def _no_pip(*a, **kw):
+        raise AssertionError("pip must not run when the AST stack already imports")
+    monkeypatch.setattr(subprocess, "run", _no_pip)
+
+    assert _install_wheelhouse(tmp_path) == {"installed": True,
+                                             "skipped": "already importable"}
+
+
+def test_wheelhouse_still_installs_when_ast_stack_missing(tmp_path, monkeypatch):
+    """With the probe failing, the existing pip flow runs unchanged."""
+    import subprocess
+    import types
+    from librarian.bootstrap import _install_wheelhouse
+
+    wh = tmp_path / "reference" / "wheelhouse"
+    wh.mkdir(parents=True)
+    (wh / "tree_sitter-0.25.2-cp310-abi3-manylinux2014_x86_64.whl").write_bytes(b"x")
+    # None entries make `import tree_sitter` raise ImportError deterministically
+    monkeypatch.setitem(sys.modules, "tree_sitter", None)
+    monkeypatch.setitem(sys.modules, "tree_sitter_language_pack", None)
+
+    calls = []
+    def _fake_pip(cmd, **kw):
+        calls.append(cmd)
+        return types.SimpleNamespace(returncode=0, stdout="", stderr="")
+    monkeypatch.setattr(subprocess, "run", _fake_pip)
+
+    assert _install_wheelhouse(tmp_path) == {"installed": True, "count": 1}
+    assert len(calls) == 1 and "--no-index" in calls[0]

@@ -36,6 +36,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from ..schema import KnowledgeUnit
+from ._progress import extract_in_chunks as _extract_in_chunks
+from ._progress import tick as _tick
 
 # --------------------------------------------------------------------------- #
 # vendored engine import — works both in the dev repo (package under vendor/)
@@ -107,7 +109,7 @@ def _confluence_extractors():
             if getattr(e, "source", None) == "confluence"]
 
 
-def parse_confluence(dump_dir) -> ConfluenceDigest:
+def parse_confluence(dump_dir, progress=None) -> ConfluenceDigest:
     """Parse a Confluence collector dump into a :class:`ConfluenceDigest`
     (pure; no Librarian).
 
@@ -115,12 +117,16 @@ def parse_confluence(dump_dir) -> ConfluenceDigest:
     is extracted once; the per-file page nodes feed the raw-KU records and the
     SAME results are resolved into the contained intra-Confluence graph. A file
     the extractor raises on lands in ``errors``/``skipped`` — surfaced, not
-    dropped."""
+    dropped.
+
+    ``progress`` (callable, e.g. ``print``): one-line count every 200 files —
+    the extraction loop dominates a big-dump digest (MASTER_PROMPT §4)."""
     root = Path(dump_dir)
     builder = (_GraphBuilder().register(*_confluence_extractors())
                .register_resolver(*_gb_default_resolvers()))
     paths = sorted(p for p in root.rglob("*") if p.is_file())
-    extracted, errors = builder.extract_files(paths, root=root)
+    extracted, errors = _extract_in_chunks(builder, paths, root, progress,
+                                           "confluence parse")
 
     pages: list = []
     for path, nodes, _raw_edges in extracted:
@@ -177,14 +183,16 @@ def to_kus(d: ConfluenceDigest):
     ), _gb_persistence.to_json(d.graph, redact_text=True)
 
 
-def ingest_confluence(lib, dump_dir, author, rationale):
+def ingest_confluence(lib, dump_dir, author, rationale, progress=None):
     """Parse a Confluence collector dump and commit it through the Librarian.
     Returns ``(Report, ConfluenceDigest)``. Re-ingesting unchanged dumps is a
-    no-op (I9)."""
-    d = parse_confluence(dump_dir)
+    no-op (I9). ``progress=print`` narrates every 200 files/KUs
+    (MASTER_PROMPT §4)."""
+    d = parse_confluence(dump_dir, progress=progress)
     txn = lib.begin(author, rationale)
-    for ku, body in to_kus(d):
+    for staged, (ku, body) in enumerate(to_kus(d), 1):
         txn.ingest_ku(ku, body=body)
+        _tick(progress, "confluence ingest", staged)
     return txn.commit(), d
 
 

@@ -43,6 +43,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from ..schema import KnowledgeUnit
+from ._progress import extract_in_chunks as _extract_in_chunks
+from ._progress import tick as _tick
 
 # --------------------------------------------------------------------------- #
 # vendored engine import — works both in the dev repo (package under vendor/)
@@ -150,7 +152,7 @@ def _plaintext(nodes) -> str:
     return "\n".join(line for line in lines if line).strip()
 
 
-def parse_office(docs_dir) -> OfficeDigest:
+def parse_office(docs_dir, progress=None) -> OfficeDigest:
     """Parse a directory of office documents into an :class:`OfficeDigest`
     (pure; no Librarian).
 
@@ -159,12 +161,16 @@ def parse_office(docs_dir) -> OfficeDigest:
     and the SAME results are resolved into the contained intra-docs graph. A
     file the extractor raises on (corrupt zip, malformed XML) lands in
     ``errors``/``skipped`` — surfaced, not dropped; files no office extractor
-    handles are simply not documents."""
+    handles are simply not documents.
+
+    ``progress`` (callable, e.g. ``print``): one-line count every 200 files —
+    the extraction loop dominates a big-upload digest (MASTER_PROMPT §4)."""
     root = Path(docs_dir)
     builder = (_GraphBuilder().register(*_office_extractors())
                .register_resolver(*_gb_default_resolvers()))
     paths = sorted(p for p in root.rglob("*") if p.is_file())
-    extracted, errors = builder.extract_files(paths, root=root)
+    extracted, errors = _extract_in_chunks(builder, paths, root, progress,
+                                           "office parse")
 
     documents: list = []
     for path, nodes, _raw_edges in extracted:
@@ -230,14 +236,16 @@ def to_kus(d: OfficeDigest):
     ), _gb_persistence.to_json(d.graph, redact_text=True)
 
 
-def ingest_office(lib, docs_dir, author, rationale):
+def ingest_office(lib, docs_dir, author, rationale, progress=None):
     """Parse a directory of office documents and commit it through the
     Librarian. Returns ``(Report, OfficeDigest)``. Re-ingesting unchanged
-    documents is a no-op (I9 — the file bytes' content hash drives it)."""
-    d = parse_office(docs_dir)
+    documents is a no-op (I9 — the file bytes' content hash drives it).
+    ``progress=print`` narrates every 200 files/KUs (MASTER_PROMPT §4)."""
+    d = parse_office(docs_dir, progress=progress)
     txn = lib.begin(author, rationale)
-    for ku, body in to_kus(d):
+    for staged, (ku, body) in enumerate(to_kus(d), 1):
         txn.ingest_ku(ku, body=body)
+        _tick(progress, "office ingest", staged)
     return txn.commit(), d
 
 

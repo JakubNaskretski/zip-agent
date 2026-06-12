@@ -21,21 +21,24 @@ You run on an **enterprise code-interpreter host** (a large reasoning model with
 At the beginning of every session, boot from the retained ZIP:
 
 ```python
-import shutil, sys, zipfile
+import sys, zipfile
+from pathlib import Path
 work = "/mnt/data/memory_work"
-shutil.rmtree(work, ignore_errors=True)   # never mix ZIP generations
-with zipfile.ZipFile("/mnt/data/memory.zip") as z:
-    z.extractall(work)
-sys.path.insert(0, work)
+if not Path(work, "librarian").is_dir():   # extract only when the workdir lacks the
+    with zipfile.ZipFile("/mnt/data/memory.zip") as z:   # engine — boot()'s mtime check
+        z.extractall(work)                 # owns staleness and supersedes a stale
+sys.path.insert(0, work)                   # workdir itself when the ZIP is newer
 from librarian.bootstrap import boot
 session = boot("/mnt/data/memory.zip", work_dir=work)
 lib = session.librarian
 print(session.wheelhouse)   # offline-install report — include it in the boot report
 ```
 
+**Boot ONCE per session. Never re-boot to recover from confusion — re-boot ONLY after the user says a new `memory.zip` was uploaded. Run `checkpoint`/`export` as the ONLY statement in its execution call.**
+
 (If your host exposes a working directory other than `/mnt/data`, adjust the paths.) `session` auto-checkpoints: after any commit that changes memory, it re-packs the working dir back into `memory.zip` atomically. You do **not** ask the user to download or re-upload anything — the host keeps the ZIP. (You may `session.export(path)` to hand them a copy on request.)
 
-`boot()` also pip-installs any wheels bundled under `reference/wheelhouse/` (offline, best-effort) — that is how the optional tree-sitter AST Apex backend turns on. No action from you: if the wheels fit this sandbox the engine upgrades itself; if not, it parses with its built-in backend. Never `pip install` from the network yourself.
+`boot()` also pip-installs any wheels bundled under `reference/wheelhouse/` (offline, best-effort) — that is how the optional tree-sitter AST Apex backend turns on. No action from you: if the wheels fit this sandbox the engine upgrades itself; if not, it parses with its built-in backend. When the AST stack already imports, boot skips pip entirely (`{"installed": True, "skipped": "already importable"}`). Never `pip install` from the network yourself.
 
 After boot, the manifest and indexes are available. Do **not** print large knowledge into the conversation — query it in code and print only the distilled answer (see §6).
 
@@ -92,12 +95,14 @@ What the Librarian guarantees (so you don't have to police it yourself): one man
   confluence.parse_confluence(dump_dir).summary()  # Confluence dump preview (pages/spaces/…)
   office.parse_office(docs_dir).summary()  # office docs preview (documents/doc_types/nodes/…)
   # on the user's go-ahead (each parses fresh and commits through the Librarian):
-  rep, dg = sf.ingest_salesforce(lib, force_app_dir, author, rationale)
+  rep, dg = sf.ingest_salesforce(lib, force_app_dir, author, rationale, progress=print)
   rep, md = mule.ingest_mule(lib, app_dir, author, rationale)
-  rep, jd = jira.ingest_jira(lib, dump_dir, author, rationale)
-  rep, cd = confluence.ingest_confluence(lib, dump_dir, author, rationale)
-  rep, od = office.ingest_office(lib, docs_dir, author, rationale)
+  rep, jd = jira.ingest_jira(lib, dump_dir, author, rationale, progress=print)
+  rep, cd = confluence.ingest_confluence(lib, dump_dir, author, rationale, progress=print)
+  rep, od = office.ingest_office(lib, docs_dir, author, rationale, progress=print)
   ```
+
+  Pass `progress=print` on any big digest (it prints a one-line count every 200 files/KUs, so a killed call shows where it stopped — see "Long operations" below); the Mule corpus is small enough not to need it.
 
   Re-ingesting unchanged content is a no-op (the report shows new/changed/unchanged). Absence in a scoped re-ingest is **not** deletion — flag it, never auto-retire. Surface `unresolved`/`errors`/`skipped` from the digest, never swallow them. **After a digest, run `rebuild_indexes(lib, author, "rebuild indexes after <source> digest")`** (`from librarian import rebuild_indexes`) so search reflects the new data. Jira/Confluence raw KUs hold each issue/page dump verbatim (`lib.read_body("jira:<PROJ>/<KEY>")` is the full detail); their `entities` carry structured ids only (issue key / space key + page id) — never extract prose names into the bridge. Office documents get THREE artifacts each: the raw KU `docs:<path>` holding the ORIGINAL file bytes (`lib.read_body` returns them verbatim — re-open/re-parse on demand), a plain-text sidecar `docs:<path>#text` that FTS indexes (section titles + text, sheet/table/column names), and the contained `docs:graph/docs` structure graph; their `entities` are ALWAYS empty — filenames, titles, headings and column names never enter the bridge.
 - **GROW** — author a curated KU (glossary term, cross-source mapping, decision, lesson) when you've confirmed something worth keeping. Always link it `derived-from` the raw KUs it rests on; if those later change, the Librarian flags your note `needs-review`. The shape that validates:
@@ -117,6 +122,16 @@ What the Librarian guarantees (so you don't have to police it yourself): one man
 - **REORG** — restructure the curated tier; preview → confirm → commit.
 
 Proactively surface curated KUs flagged `review_needed` — they were built on sources that have since changed.
+
+### Long operations — sandbox survival rules
+
+Your sandbox kills any single execution that runs too long, and the kernel dies **silently** mid-call; long stdout gets truncated. Work accordingly:
+
+- **Keep every execution under ~30 s.** Split big work across calls — the working dir persists between them.
+- **Big digests: parse in one call (pure), ingest in the next.** Never chain parse + ingest + `rebuild_indexes` into a single execution.
+- **Narrate progress to the user between calls** — what just finished, what runs next. Pass `progress=print` to the ingest entry points so a killed call shows how far it got.
+- **If a call dies, never restart the whole task.** Committed state is durable (I12 — every commit re-packs the ZIP atomically). Report WHICH step died, then resume after the last successful commit; re-ingesting already-committed content is a no-op (I9).
+- **Never print full KU listings.** Reports cap themselves at 5 examples per change kind ("... and N more") — trust the exact counts; never re-render the full lists.
 
 ### 4.1 ASK — the answer path
 
@@ -215,7 +230,8 @@ Data Center, Bearer PAT):
 ## 8. Cheat sheet
 
 ```
-BOOT      unzip memory.zip → sys.path → boot() → session.librarian
+BOOT      unzip (only if workdir lacks librarian/) → sys.path → boot() → session.librarian
+          — ONCE per session; re-boot only after the user uploads a NEW memory.zip
 ASK       classify → entity bridge / graph / FTS → expand minimally → cite KU ids + confidence (§4.1)
 MANIFEST  lib.manifest.get(id) → one KU; .all() / .entries → every KU; .stats → counts by tier/source/kind
 DIGEST    sf.digest()/mule.parse_mule()/jira.parse_jira()/confluence.parse_confluence()/
@@ -228,6 +244,8 @@ DOCS      raw file bytes: lib.read_body("docs:<path>") · searchable text: docs:
 GROW      lib.begin(author, why).add_ku(KnowledgeUnit(id="curated:…", kind="curated-note",
           tier="curated", source="agent", path="kb/curated/…", links=[derived-from…]), body=…).commit()
 REORG     plan → preview (before/after) → confirm → commit
+LONG OPS  every call <30s · parse and ingest in SEPARATE calls · progress=print on big ingests
+          · a dead call: report the step, resume after the last commit (I12) — never restart
 SAFETY    sources are READ-ONLY; never hand-edit KB/manifest/index; rationale = a real sentence
 PERSIST   commits auto-checkpoint into memory.zip; host retains it across sessions
 ```

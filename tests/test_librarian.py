@@ -134,3 +134,35 @@ def test_stats_after_several_commits(lib):
     assert s["total"] == 3
     assert s["by_status"]["active"] == 3
     assert s["generation"] == 1
+
+
+# ---- report rendering cap (sandbox stdout truncates long output) ----
+
+def test_huge_report_repr_is_capped():
+    """A 1000-change report renders in well under ~30 lines: exact counts in
+    the header, at most 5 examples per change kind + '... and N more'."""
+    from librarian.librarian import Report
+
+    rep = Report()
+    rep.changes = ([f"INGEST jira:PROJ-{i} (new)" for i in range(900)]
+                   + [f"RE-INGEST salesforce:object/Obj{i} (content changed)"
+                      for i in range(100)])
+    rep.unchanged = [f"mule:flows/file{i}.xml" for i in range(500)]
+    text = repr(rep)
+    lines = text.splitlines()
+    assert len(lines) <= 30
+    assert "1000 change(s), 500 unchanged" in lines[0]   # counts stay exact
+    assert "... and 895 more INGEST" in text
+    assert "... and 95 more RE-INGEST" in text
+    assert "... and 495 more unchanged" in text
+    assert "jira:PROJ-0" in text and "jira:PROJ-6" not in text   # 5 examples
+
+
+def test_small_report_repr_lists_everything():
+    from librarian.librarian import Report
+
+    rep = Report()
+    rep.changes = [f"ADD curated:notes/n{i} (curated-note, curated)" for i in range(3)]
+    text = repr(rep)
+    assert all(f"curated:notes/n{i}" in text for i in range(3))
+    assert "more" not in text                            # no cap line under the cap
