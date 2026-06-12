@@ -64,13 +64,15 @@ linux x86_64 / Python 3.12 — not your machine's):
 rm -rf wheelhouse/        # pip download APPENDS — always start clean
 python3 -m pip download --only-binary :all: --platform manylinux2014_x86_64 \
     --python-version 312 -d wheelhouse/ \
-    "tree-sitter>=0.25.2,<1" "tree-sitter-language-pack==0.13.0"
+    "tree-sitter>=0.25.2,<1" "tree-sitter-language-pack==0.13.0" "pypdf>=4,<7"
 python3 scripts/build_memory.py --wheelhouse wheelhouse/ memory.zip
 ```
 
-The result is **~18 MB** — the language-pack wheel is large because every
-grammar is bundled inside, which is exactly what offline needs. A ~3 MB zip
-means a leftover pack 1.x wheel won; the builder now refuses that outright.
+The result is **~4 MB**: the builder automatically slims the language-pack
+wheel to the one grammar the agent uses (apex; 20 MB -> 0.3 MB — pass
+`--no-slim` to keep all grammars), and `pypdf` rides along for the PDF digest.
+A pack 1.x wheel in the dir is refused outright (it downloads grammars at
+runtime — unusable offline).
 
 Sanity check B before uploading: `unzip -l memory.zip | grep wheelhouse` must
 list five wheels including `tree_sitter_language_pack-0.13.0`. The 0.13 pin is

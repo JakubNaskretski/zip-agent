@@ -199,3 +199,43 @@ def test_wheelhouse_still_installs_when_ast_stack_missing(tmp_path, monkeypatch)
 
     assert _install_wheelhouse(tmp_path) == {"installed": True, "count": 1}
     assert len(calls) == 1 and "--no-index" in calls[0]
+
+
+def test_build_slims_language_pack_wheel(tmp_path):
+    """The fat 0.x language-pack wheel is stripped to the apex grammar with a
+    valid regenerated RECORD; other wheels pass through untouched."""
+    import base64, hashlib, zipfile as zf
+    import importlib.util
+    from pathlib import Path as _P
+    spec = importlib.util.spec_from_file_location(
+        "build_memory", _P(__file__).resolve().parents[1] / "scripts" / "build_memory.py")
+    bm = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(bm)
+
+    wh = tmp_path / "wh"
+    wh.mkdir()
+    pack = wh / "tree_sitter_language_pack-0.13.0-cp310-abi3-manylinux2014_x86_64.whl"
+    with zf.ZipFile(pack, "w") as z:
+        meta = b"Metadata-Version: 2.1\nName: tree-sitter-language-pack\nVersion: 0.13.0\n"
+        z.writestr("tree_sitter_language_pack/__init__.py", "x = 1\n")
+        z.writestr("tree_sitter_language_pack/bindings/apex.abi3.so", b"\x7fELF-apex")
+        z.writestr("tree_sitter_language_pack/bindings/verilog.abi3.so", b"\x7fELF" + b"0" * 4096)
+        z.writestr("tree_sitter_language_pack-0.13.0.dist-info/METADATA", meta)
+        z.writestr("tree_sitter_language_pack-0.13.0.dist-info/RECORD", "stale\n")
+    (wh / "tree_sitter-0.25.2-cp312-cp312-manylinux2014_x86_64.whl").write_bytes(
+        zf.ZipFile.__name__.encode())  # passthrough marker file (not opened by build)
+
+    memzip = bm.build(tmp_path / "m.zip", wheelhouse=wh)
+    with zf.ZipFile(memzip) as z:
+        slim_name = "reference/wheelhouse/" + pack.name
+        data = z.read(slim_name)
+    with zf.ZipFile(__import__("io").BytesIO(data)) as sw:
+        names = sw.namelist()
+        assert "tree_sitter_language_pack/bindings/apex.abi3.so" in names
+        assert not any("verilog" in n for n in names)
+        record = sw.read("tree_sitter_language_pack-0.13.0.dist-info/RECORD").decode()
+        # every kept file is hash-listed; the stale RECORD line is gone
+        assert "apex.abi3.so" in record and "stale" not in record
+        h = base64.urlsafe_b64encode(
+            hashlib.sha256(b"\x7fELF-apex").digest()).rstrip(b"=").decode()
+        assert h in record

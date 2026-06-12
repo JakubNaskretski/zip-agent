@@ -15,6 +15,7 @@ from __future__ import annotations
 import argparse
 import shutil
 import tempfile
+import zipfile
 from pathlib import Path
 
 import sys
@@ -36,19 +37,60 @@ _IGNORE = shutil.ignore_patterns("__pycache__", "*.pyc", "*.pyo", "*.tmp")
 #
 #   pip download --only-binary :all: --platform manylinux2014_x86_64 \
 #       --python-version 312 -d wheelhouse/ \
-#       "tree-sitter>=0.25.2,<1" "tree-sitter-language-pack==0.13.0"
+#       "tree-sitter>=0.25.2,<1" "tree-sitter-language-pack==0.13.0" "pypdf>=4,<7"
 #
 # The ==0.13.0 pin is REQUIRED for offline sandboxes: the last release bundling
 # all grammars in the wheel. Pack 1.x fetches grammars from GitHub on first
 # use — impossible without network. 0.13's property-style node API is handled
 # by the engine's compatibility shim.
 #
-# (Version caps mirror the engine's `ast` extra — see vendor/README.md.)
+# The builder slims the pack wheel to the apex grammar by default (~20 MB ->
+# ~0.3 MB; --no-slim keeps all grammars). pypdf enables the PDF digest.
+# (Version caps mirror the engine's `ast`/`pdf` extras — see vendor/README.md.)
 # Wrong-platform wheels fail the boot-time install harmlessly: the engine
 # falls back to the regex backend, exactly as without a wheelhouse.
 
 
-def build(dest="memory.zip", seed_dir=None, wheelhouse=None) -> Path:
+def _slim_language_pack(src, dest, keep="apex"):
+    """Rewrite a language-pack 0.x wheel keeping ONLY the ``keep`` grammar.
+
+    The 0.x wheels bundle ~100 compiled grammars (verilog alone is 17 MB); the
+    agent parses exactly one. Stripping ``bindings/*.so`` down to the one we use
+    cuts the wheel ~20 MB -> ~0.3 MB — which also shrinks every boot install and
+    every checkpoint pack. The wheel RECORD is regenerated (pip verifies per-file
+    sha256 on install); METADATA is untouched, so the pack's tiny grammar-dep
+    wheels (c_sharp/embedded_template/yaml — imported by its __init__) must stay
+    in the wheelhouse. Returns (orig_mb, slim_mb)."""
+    import base64, csv, hashlib, io
+
+    src, dest = Path(src), Path(dest)
+    with zipfile.ZipFile(src) as zin:
+        names = zin.namelist()
+        dist_info = next(n for n in names if n.endswith("/METADATA")).rsplit("/", 1)[0]
+        out = io.BytesIO()
+        rows = []
+        with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as zout:
+            for n in names:
+                if "/bindings/" in n and not n.endswith(f"/{keep}.abi3.so"):
+                    continue
+                if n.endswith("/RECORD"):
+                    continue
+                data = zin.read(n)
+                zout.writestr(n, data)
+                digest = base64.urlsafe_b64encode(
+                    hashlib.sha256(data).digest()).rstrip(b"=").decode()
+                rows.append((n, f"sha256={digest}", str(len(data))))
+            rec = io.StringIO()
+            writer = csv.writer(rec)
+            for row in rows:
+                writer.writerow(row)
+            writer.writerow((f"{dist_info}/RECORD", "", ""))
+            zout.writestr(f"{dist_info}/RECORD", rec.getvalue())
+    dest.write_bytes(out.getvalue())
+    return src.stat().st_size / 1048576, dest.stat().st_size / 1048576
+
+
+def build(dest="memory.zip", seed_dir=None, wheelhouse=None, slim=True) -> Path:
     staging = Path(tempfile.mkdtemp()) / "mem"
     staging.mkdir(parents=True)
 
@@ -78,9 +120,10 @@ def build(dest="memory.zip", seed_dir=None, wheelhouse=None) -> Path:
                 "SANDBOX's platform/Python, not this machine's), e.g. for a "
                 "linux x86_64 / Python 3.12 sandbox:\n\n"
                 f"  python3 -m pip download --only-binary :all: "
-                "--platform manylinux_2_34_x86_64 --platform manylinux2014_x86_64 \\\n"
+                "--platform manylinux2014_x86_64 \\\n"
                 f"      --python-version 312 -d {wheelhouse} \\\n"
-                "      \"tree-sitter>=0.25,<1\" \"tree-sitter-language-pack>=1,<2\"\n\n"
+                "      \"tree-sitter>=0.25.2,<1\" \"tree-sitter-language-pack==0.13.0\" "
+                "\"pypdf>=4,<7\"\n\n"
                 "Or build WITHOUT --wheelhouse — the agent then uses the "
                 "always-on regex Apex backend.")
         # keep only the NEWEST wheel per package — `pip download -d` appends,
@@ -109,7 +152,12 @@ def build(dest="memory.zip", seed_dir=None, wheelhouse=None) -> Path:
         dest_wh = staging / "reference" / "wheelhouse"
         dest_wh.mkdir(parents=True)
         for w in wheels:
-            shutil.copy2(w, dest_wh / w.name)
+            if slim and w.name.startswith("tree_sitter_language_pack-0."):
+                before, after = _slim_language_pack(w, dest_wh / w.name, keep="apex")
+                print(f"wheelhouse: slimmed {w.name.split('-')[0]} to apex-only "
+                      f"({before:.1f} MB -> {after:.1f} MB; --no-slim keeps all grammars)")
+            else:
+                shutil.copy2(w, dest_wh / w.name)
         print(f"Apex backend in this zip: AST ({len(wheels)} wheels bundled)")
     else:
         print("Apex backend in this zip: regex — no wheelhouse bundled "
@@ -125,11 +173,14 @@ if __name__ == "__main__":
     ap = argparse.ArgumentParser()
     ap.add_argument("out", nargs="?", default="memory.zip")
     ap.add_argument("--seed", default=None, help="directory of initial KB content to include")
+    ap.add_argument("--no-slim", action="store_true",
+                    help="bundle the language-pack wheel with ALL grammars "
+                         "(default slims it to apex-only; see _slim_language_pack)")
     ap.add_argument("--wheelhouse", default=None,
                     help="directory of *.whl files to bundle for offline install at boot "
                          "(use: the tree-sitter AST backend; see module docstring)")
     args = ap.parse_args()
-    out = build(args.out, args.seed, args.wheelhouse)
+    out = build(args.out, args.seed, args.wheelhouse, slim=not args.no_slim)
     print(f"built {out}")
     print("reminder: paste MASTER_PROMPT.md into the agent builder's instructions "
           "field — it is NOT inside the ZIP.")
