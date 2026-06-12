@@ -126,7 +126,7 @@ mg  = mule.load_graph(lib)         # Mule flow graph (once Mule is ingested)
 
 **Step 4 — synthesize.** Answer in prose, **cite the KU ids** you used (they encode the source), and state a confidence tier (§5). Process in code; print the distilled answer, not raw KUs.
 
-**Cross-source is the payoff:** the same entity name joins Salesforce, Jira, Confluence, and Mule through the bridge — e.g. "which Jira tickets touch `MeterPointService`?" is `cross_source(con, "MeterPointService")["jira"]`, an O(1) lookup with no scanning. (Today only Salesforce is loaded; other sources join automatically once digested.)
+**Cross-source, by design:** the entity bridge carries STRUCTURED names only — Salesforce components/fields and Mule flows/connectors/property keys/API paths. Jira and Confluence content is deliberately NOT entity-bridged (prose-derived names would pollute the bridge); find references in them on demand with full-text search instead — e.g. "which Jira tickets touch `MeterPointService`?" is `retrieve.search(con, "MeterPointService")` and read the matching KUs. Never bulk-extract entity names out of Jira/Confluence text into the bridge.
 
 ---
 
