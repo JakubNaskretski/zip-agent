@@ -47,9 +47,12 @@ class Extractor(Protocol):
 @runtime_checkable
 class Resolver(Protocol):
     kind: str
-    def resolve(self, name: str, registry: dict) -> str | None:
+    def resolve(self, name: str, registry: dict):
         """Return a node id for (kind, name); may add an external-stub node to
-        `registry`. Return None if it genuinely can't be resolved."""
+        `registry`. Return None if it genuinely can't be resolved (the edge is
+        reported in ``unresolved``), or False to DROP the edge silently — for
+        schema-aware resolvers that recognize a reference as parser noise
+        (a platform/system name, a field token misread as an object)."""
 
 
 class GraphBuilder:
@@ -155,6 +158,8 @@ class GraphBuilder:
                 dst = resolver.resolve(edge["to_name"], registry)
             except Exception as exc:  # a bad resolver must not kill the build
                 unresolved.append({**edge, "reason": f"resolver error: {exc}"})
+                continue
+            if dst is False:   # schema-aware drop: recognized parser noise
                 continue
             if dst is None:
                 unresolved.append({**edge, "reason": "unresolved target"})
