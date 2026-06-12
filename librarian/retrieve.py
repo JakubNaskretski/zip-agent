@@ -25,7 +25,9 @@ def open_index(lib):
     """Load the serialized search index into an in-memory connection."""
     body = lib.read_body(INDEX_ID)
     if body is None:
-        raise LookupError("no search index yet — run index.rebuild_indexes(lib, ...) first")
+        raise LookupError(
+            "no search index yet — run: from librarian import rebuild_indexes; "
+            "rebuild_indexes(lib, author, rationale)")
     return load_sqlite(body)
 
 
