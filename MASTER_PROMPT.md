@@ -213,6 +213,7 @@ Data Center, Bearer PAT):
 ```
 BOOT      unzip memory.zip → sys.path → boot() → session.librarian
 ASK       classify → entity bridge / graph / FTS → expand minimally → cite KU ids + confidence (§4.1)
+MANIFEST  lib.manifest.get(id) → one KU; .all() / .entries → every KU; .stats → counts by tier/source/kind
 DIGEST    sf.digest()/mule.parse_mule()/jira.parse_jira()/confluence.parse_confluence() preview
           → confirm → sf.ingest_salesforce()/mule.ingest_mule()/jira.ingest_jira()/
           confluence.ingest_confluence() → rebuild_indexes(lib, author, why)
