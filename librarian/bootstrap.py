@@ -84,13 +84,25 @@ def _install_wheelhouse(work_dir) -> dict:
     wheels = sorted(glob.glob(str(wh / "*.whl")))
     if not wheels:
         return {"installed": False, "reason": "wheelhouse empty"}
-    try:
-        subprocess.check_call(
-            [sys.executable, "-m", "pip", "install", "--no-index",
-             "--find-links", str(wh), *wheels])
-        return {"installed": True, "count": len(wheels)}
-    except Exception as e:   # pragma: no cover - environment dependent
-        return {"installed": False, "reason": str(e)}
+    # --upgrade matters: sandboxes often PREINSTALL an older tree-sitter, and
+    # without it pip leaves the old (property-style-API) binding in place — the
+    # engine's probe then correctly refuses it and Apex stays on regex. Retry
+    # on the user site for hosts whose system site-packages is read-only.
+    cmd = [sys.executable, "-m", "pip", "install", "--no-index", "--upgrade",
+           "--find-links", str(wh), *wheels]
+    last = None
+    for extra in ((), ("--user",)):
+        try:
+            last = subprocess.run([*cmd, *extra], capture_output=True, text=True)
+        except Exception as e:   # pragma: no cover - environment dependent
+            return {"installed": False, "reason": str(e)}
+        if last.returncode == 0:
+            out = {"installed": True, "count": len(wheels)}
+            if extra:
+                out["user_site"] = True
+            return out
+    return {"installed": False,   # pip's own words, so the boot report says WHY
+            "reason": ((last.stderr or last.stdout or "").strip())[-400:]}
 
 
 def boot(memory_zip, work_dir=None, install_wheelhouse=True, autosave=True) -> Session:

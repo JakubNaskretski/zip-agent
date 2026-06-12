@@ -37,7 +37,7 @@ _IGNORE = shutil.ignore_patterns("__pycache__", "*.pyc", "*.pyo", "*.tmp")
 #   pip download --only-binary :all: \
 #       --platform manylinux_2_34_x86_64 --platform manylinux2014_x86_64 \
 #       --python-version 312 -d wheelhouse/ \
-#       "tree-sitter>=0.21,<1" "tree-sitter-language-pack>=1,<2"
+#       "tree-sitter>=0.25,<1" "tree-sitter-language-pack>=1,<2"
 #
 # The language pack must be >=1.x — 0.x packs expose the property-style node
 # API the engine's probe rejects (it would fall back to regex).
@@ -79,7 +79,7 @@ def build(dest="memory.zip", seed_dir=None, wheelhouse=None) -> Path:
                 f"  python3 -m pip download --only-binary :all: "
                 "--platform manylinux_2_34_x86_64 --platform manylinux2014_x86_64 \\\n"
                 f"      --python-version 312 -d {wheelhouse} \\\n"
-                "      \"tree-sitter>=0.21,<1\" \"tree-sitter-language-pack>=1,<2\"\n\n"
+                "      \"tree-sitter>=0.25,<1\" \"tree-sitter-language-pack>=1,<2\"\n\n"
                 "Or build WITHOUT --wheelhouse — the agent then uses the "
                 "always-on regex Apex backend.")
         dest_wh = staging / "reference" / "wheelhouse"

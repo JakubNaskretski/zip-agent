@@ -56,9 +56,11 @@ def _ast_api_supported(parser) -> bool:
 
     The AST backend calls ``tree.root_node()``, ``node.kind()``,
     ``node.child_count()``, ``node.child(i)``, ``node.child_by_field_name()``,
-    ``node.start_byte()/end_byte()`` — all as *methods*. The official
-    ``tree-sitter`` package exposes these as *properties* and has no ``.kind``, so
-    a binding swap would break the backend. ``_dispatch`` swallows per-file AST
+    ``node.start_byte()/end_byte()`` — all as *methods*: the API of the official
+    ``tree-sitter`` binding since its 0.25 rewrite. Pre-0.25 bindings expose
+    these as *properties* (``.type``, no ``.kind``) — e.g. a sandbox's
+    preinstalled older tree-sitter shadowing the bundled wheel — and would
+    break the backend. ``_dispatch`` swallows per-file AST
     errors and falls back to regex, so without this one-time probe such a break
     would degrade every file silently."""
     try:
