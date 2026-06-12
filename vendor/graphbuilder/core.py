@@ -153,12 +153,33 @@ class GraphBuilder:
         """Pass 2: registry + resolution over :meth:`extract_files` output.
         Returns the usual ``{"nodes", "edges", "unresolved", "errors"}``."""
         # `registry` maps node id -> node dict; the first node seen for an id
-        # wins (setdefault), so duplicate emissions are harmless.
+        # wins (setdefault), so duplicate emissions are harmless. A node marked
+        # ``partial: True`` is an ATTRIBUTE DONOR (e.g. a translation file
+        # contributing `label_pl` to a field defined elsewhere): it never claims
+        # the node's identity attrs (label/source_path), it only fills attrs the
+        # real node doesn't have. A partial with no real counterpart stays in
+        # the graph still flagged ``partial`` — the thing it annotates was not
+        # retrieved.
         registry: dict[str, dict] = {}
         pending_edges: list[dict] = []
+        _IDENTITY = ("id", "type", "label", "source_path", "partial")
         for _, nodes, edges in extracted:
             for n in nodes:
-                registry.setdefault(n["id"], n)
+                cur = registry.get(n["id"])
+                if cur is None:
+                    registry[n["id"]] = n
+                elif n.get("partial") or cur.get("partial") == n.get("partial"):
+                    # donor arriving second, or same standing: fill missing attrs
+                    for k, v in n.items():
+                        if k not in _IDENTITY:
+                            cur.setdefault(k, v)
+                else:
+                    # real node arriving after a donor: it takes over, keeping
+                    # the donor's contributed attrs as fill
+                    for k, v in cur.items():
+                        if k not in _IDENTITY:
+                            n.setdefault(k, v)
+                    registry[n["id"]] = n
             pending_edges.extend(edges)
 
         resolved_edges: list[dict] = []

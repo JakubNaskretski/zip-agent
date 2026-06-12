@@ -66,7 +66,7 @@ from graphbuilder.extractors import all_extractors as _gb_all_extractors
 from graphbuilder.resolvers import default_resolvers as _gb_default_resolvers
 
 # pin recorded in the built-in tool KU (and echoed in this module's docstring)
-_VENDORED_SHA = "eaa5e41"   # on engine main since merge 16fde99
+_VENDORED_SHA = "d150533"   # engine main — adds label_<locale> translations
 _VENDORED_AT = "2026-06-12"
 
 GRAPH_ID = "salesforce:graph/sf"
@@ -255,8 +255,12 @@ def digest(force_app_dir) -> Digest:
                .register_resolver(*_gb_default_resolvers()))
     paths = sorted(p for p in root.rglob("*") if p.is_file())
     extracted, errors = builder.extract_files(paths, root=root)
+    # translation files emit only partial attribute-donor nodes (label_<locale>);
+    # they enrich the graph but must not mint KUs — their primary node id would
+    # collide with the real object/field KU minted from the defining file
     kus = [_file_to_ku(path, nodes, raw_edges, root)
-           for path, nodes, raw_edges in extracted if nodes]
+           for path, nodes, raw_edges in extracted
+           if any(not n.get("partial") for n in nodes)]
     graph = builder.resolve_extracted(extracted, errors)
     kus.append(_graph_ku(graph))
     # extraction failures live in graph["errors"]; mirror the old skipped strings

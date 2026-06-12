@@ -15,8 +15,8 @@ its always-on regex backend).
 | | |
 |---|---|
 | Source | `graph-builder` (private sibling repo) |
-| Pinned commit | `eaa5e41` (on `main` since merge `16fde99`) |
-| Pinned tip | node→source `source_path` traceability, flexipage fields/actions/related-lists/page attrs, Jira envelope incl. releases/sprints/epic, Apex method signatures, Confluence ancestors/timestamps — on top of `733c202` (schema-aware resolvers) |
+| Pinned commit | `d150533` (engine `main`) |
+| Pinned tip | translated display labels (`label_<locale>` attrs via partial donor nodes) + node→source `source_path` traceability, flexipage fields/actions/related-lists/page attrs, Jira envelope incl. releases/sprints/epic, Apex method signatures, Confluence ancestors/timestamps — on top of `733c202` (schema-aware resolvers) |
 | Vendored on | 2026-06-12 |
 | Scope | the `graphbuilder/` package only — no tests, no scripts |
 | Coverage | 26 Salesforce extractors (objects/fields, Apex+methods, triggers, flows+elements, LWC, Aura, Visualforce, flexipages, layouts, perm sets/profiles/groups, sharing rules, approval processes, reports, rules, OmniStudio, labels, …) + the Mule extractors (`graphbuilder/mulesoft` + `extractors/{mule,raml,muleprops,mulebuild}`: flow/flow-ref/connector graph, APIkit surface incl. RAML specs/resources, source triggers, global configs, property files/keys, pom + descriptor build metadata). Confluence + Jira subpackages are included for the planned Phase-4 collectors. |
