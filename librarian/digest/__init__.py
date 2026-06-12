@@ -13,4 +13,8 @@ docs/ARCHITECTURE.md §6.
 - ``confluence`` — Confluence collector-dump digest (``<SPACE>/<id>.page.json``
   → raw page KUs + a contained intra-Confluence graph; entities = space key +
   page id only).
+- ``office`` — office-document digest (``.docx`` / ``.xlsx`` / ``.xlsm`` uploads
+  → raw KUs holding the ORIGINAL file bytes + plain-text sidecar KUs that FTS
+  indexes + a contained intra-docs structure graph; entities always empty —
+  document prose never enters the bridge).
 """

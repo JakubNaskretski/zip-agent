@@ -11,7 +11,7 @@ from dataclasses import asdict, dataclass, field
 
 # ---- controlled vocabularies (one place; invariant I4) ----
 TIERS = {"raw", "structured", "indexes", "curated", "built-in"}
-SOURCES = {"jira", "confluence", "mule", "salesforce", "domain", "agent"}
+SOURCES = {"jira", "confluence", "mule", "salesforce", "docs", "domain", "agent"}
 KINDS = {
     "source-record",   # raw: a Jira issue, Confluence page, Mule/SF source file
     "graph",           # structured: a derived graph file (mule/sf)

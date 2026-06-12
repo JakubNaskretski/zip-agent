@@ -82,22 +82,24 @@ What the Librarian guarantees (so you don't have to police it yourself): one man
 ## 4. Operations
 
 - **ASK** — answer a question. Classify it, route to the right retrieval mode (entity bridge / graph / full-text), expand minimally, synthesize with cited KU ids + a confidence tier. Full routing in **§4.1**. Never dump files into context.
-- **DIGEST** — ingest a data ZIP the user uploaded. Unzip it, detect the source by layout (`force-app/` → Salesforce; `src/main/mule/` or `pom.xml` + `mule-artifact.json` → Mule; `<PROJECT>/<KEY>.issue.json` → Jira dump; `<SPACE>/<id>.page.json` → Confluence dump, both from the §7 collectors), **parse first (pure — nothing committed), show the summary as the digest report, get confirmation, then ingest**:
+- **DIGEST** — ingest a data ZIP the user uploaded. Unzip it, detect the source by layout (`force-app/` → Salesforce; `src/main/mule/` or `pom.xml` + `mule-artifact.json` → Mule; `<PROJECT>/<KEY>.issue.json` → Jira dump; `<SPACE>/<id>.page.json` → Confluence dump, both from the §7 collectors; `.docx`/`.xlsx`/`.xlsm` files → office documents), **parse first (pure — nothing committed), show the summary as the digest report, get confirmation, then ingest**:
 
   ```python
-  from librarian.digest import graphbuilder as sf, mule, jira, confluence
+  from librarian.digest import graphbuilder as sf, mule, jira, confluence, office
   sf.digest(force_app_dir).summary()       # SF preview: KUs/nodes/edges/unresolved/errors
   mule.parse_mule(app_dir).summary()       # Mule preview (same idea)
   jira.parse_jira(dump_dir).summary()      # Jira dump preview (issues/projects/nodes/edges)
   confluence.parse_confluence(dump_dir).summary()  # Confluence dump preview (pages/spaces/…)
+  office.parse_office(docs_dir).summary()  # office docs preview (documents/doc_types/nodes/…)
   # on the user's go-ahead (each parses fresh and commits through the Librarian):
   rep, dg = sf.ingest_salesforce(lib, force_app_dir, author, rationale)
   rep, md = mule.ingest_mule(lib, app_dir, author, rationale)
   rep, jd = jira.ingest_jira(lib, dump_dir, author, rationale)
   rep, cd = confluence.ingest_confluence(lib, dump_dir, author, rationale)
+  rep, od = office.ingest_office(lib, docs_dir, author, rationale)
   ```
 
-  Re-ingesting unchanged content is a no-op (the report shows new/changed/unchanged). Absence in a scoped re-ingest is **not** deletion — flag it, never auto-retire. Surface `unresolved`/`errors`/`skipped` from the digest, never swallow them. **After a digest, run `rebuild_indexes(lib, author, "rebuild indexes after <source> digest")`** (`from librarian import rebuild_indexes`) so search reflects the new data. Jira/Confluence raw KUs hold each issue/page dump verbatim (`lib.read_body("jira:<PROJ>/<KEY>")` is the full detail); their `entities` carry structured ids only (issue key / space key + page id) — never extract prose names into the bridge.
+  Re-ingesting unchanged content is a no-op (the report shows new/changed/unchanged). Absence in a scoped re-ingest is **not** deletion — flag it, never auto-retire. Surface `unresolved`/`errors`/`skipped` from the digest, never swallow them. **After a digest, run `rebuild_indexes(lib, author, "rebuild indexes after <source> digest")`** (`from librarian import rebuild_indexes`) so search reflects the new data. Jira/Confluence raw KUs hold each issue/page dump verbatim (`lib.read_body("jira:<PROJ>/<KEY>")` is the full detail); their `entities` carry structured ids only (issue key / space key + page id) — never extract prose names into the bridge. Office documents get THREE artifacts each: the raw KU `docs:<path>` holding the ORIGINAL file bytes (`lib.read_body` returns them verbatim — re-open/re-parse on demand), a plain-text sidecar `docs:<path>#text` that FTS indexes (section titles + text, sheet/table/column names), and the contained `docs:graph/docs` structure graph; their `entities` are ALWAYS empty — filenames, titles, headings and column names never enter the bridge.
 - **GROW** — author a curated KU (glossary term, cross-source mapping, decision, lesson) when you've confirmed something worth keeping. Always link it `derived-from` the raw KUs it rests on; if those later change, the Librarian flags your note `needs-review`. The shape that validates:
 
   ```python
@@ -122,10 +124,11 @@ Three retrieval modes, composed. Load what you need per question:
 
 ```python
 from librarian import retrieve
-from librarian.digest import graphbuilder as sf, mule   # SF digest = vendored graph-builder engine
+from librarian.digest import graphbuilder as sf, mule, office   # vendored graph-builder engine
 con = retrieve.open_index(lib)     # entity bridge + full-text search (all sources)
 g   = sf.load_graph(lib)           # Salesforce relationship graph
 mg  = mule.load_graph(lib)         # Mule flow graph (once Mule is ingested)
+og  = office.load_graph(lib)       # office docs structure graph (sections/sheets/tables)
 ```
 
 **Step 1 — classify the question:**
@@ -152,6 +155,7 @@ mg  = mule.load_graph(lib)         # Mule flow graph (once Mule is ingested)
 | What's exposed on which HTTP path / all Mule entry points | `mule.flows_exposed_on(mg, "/api/*")`; `mule.entrypoints(mg)` (listeners + schedulers + queue sources) |
 | What reads a property key / what a flow reads / secret-bearing keys | `mule.flows_reading(mg, "db.host")`, `mule.keys_read_by(mg, "flow")`, `mule.secure_keys(mg)` (key NAMES only — values are never captured) |
 | A Mule flow's configs / the app's connector dependencies | `mule.configs_used(mg, "flow")`; `mule.app_dependencies(mg)` |
+| What a design doc / spec / mapping workbook says about X | `retrieve.search(con, "X", source="docs")` → hits the `docs:<path>#text` sidecars; document structure (sections/sheets/tables, `columns` attrs) via `office.load_graph(lib)`; the original file via `lib.read_body("docs:<path>")` |
 | Impact of changing `N` (anything) | `find_entity(con, "N")` → for each hit, `sf.dependents(g, node_id)` |
 | Any node's in/out edges, by type | `sf.neighbors(g, node_id, "in"\|"out", edge_type)` |
 
@@ -159,7 +163,7 @@ mg  = mule.load_graph(lib)         # Mule flow graph (once Mule is ingested)
 
 **Step 4 — synthesize.** Answer in prose, **cite the KU ids** you used (they encode the source), and state a confidence tier (§5). Process in code; print the distilled answer, not raw KUs.
 
-**Cross-source, by design:** the entity bridge carries STRUCTURED names only — Salesforce components/fields, Mule flows/connectors/property keys/API paths, Jira issue keys, Confluence space keys/page ids. Jira and Confluence *content* is deliberately NOT entity-bridged (prose-derived names would pollute the bridge); find references in them on demand with full-text search instead — e.g. "which Jira tickets touch `MeterPointService`?" is `retrieve.search(con, "MeterPointService")` and read the matching KUs. Never bulk-extract entity names out of Jira/Confluence text into the bridge.
+**Cross-source, by design:** the entity bridge carries STRUCTURED names only — Salesforce components/fields, Mule flows/connectors/property keys/API paths, Jira issue keys, Confluence space keys/page ids. Jira, Confluence and office-document *content* is deliberately NOT entity-bridged (prose-derived names would pollute the bridge; office KUs carry NO entities at all); find references in them on demand with full-text search instead — e.g. "which Jira tickets touch `MeterPointService`?" is `retrieve.search(con, "MeterPointService")` and read the matching KUs. Never bulk-extract entity names out of Jira/Confluence/document text into the bridge.
 
 ---
 
@@ -214,10 +218,13 @@ Data Center, Bearer PAT):
 BOOT      unzip memory.zip → sys.path → boot() → session.librarian
 ASK       classify → entity bridge / graph / FTS → expand minimally → cite KU ids + confidence (§4.1)
 MANIFEST  lib.manifest.get(id) → one KU; .all() / .entries → every KU; .stats → counts by tier/source/kind
-DIGEST    sf.digest()/mule.parse_mule()/jira.parse_jira()/confluence.parse_confluence() preview
-          → confirm → sf.ingest_salesforce()/mule.ingest_mule()/jira.ingest_jira()/
-          confluence.ingest_confluence() → rebuild_indexes(lib, author, why)
-          (jira/confluence dumps come from the §7 collectors)
+DIGEST    sf.digest()/mule.parse_mule()/jira.parse_jira()/confluence.parse_confluence()/
+          office.parse_office() preview → confirm → sf.ingest_salesforce()/mule.ingest_mule()/
+          jira.ingest_jira()/confluence.ingest_confluence()/office.ingest_office()
+          → rebuild_indexes(lib, author, why)
+          (jira/confluence dumps come from the §7 collectors; office = .docx/.xlsx/.xlsm uploads)
+DOCS      raw file bytes: lib.read_body("docs:<path>") · searchable text: docs:<path>#text (FTS)
+          · structure: office.load_graph(lib) · entities ALWAYS empty (prose never bridged)
 GROW      lib.begin(author, why).add_ku(KnowledgeUnit(id="curated:…", kind="curated-note",
           tier="curated", source="agent", path="kb/curated/…", links=[derived-from…]), body=…).commit()
 REORG     plan → preview (before/after) → confirm → commit

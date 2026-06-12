@@ -78,7 +78,7 @@ The atom of memory. Every file in `kb/` is described by exactly one KU record in
   "id": "jira:PROJ-123",            // STABLE. Derived from source identity. Never renumbered.
   "kind": "source-record",          // source-record | graph | doc | index | curated-note | standard | tool | instruction
   "tier": "raw",                    // raw | structured | indexes | curated | built-in
-  "source": "jira",                 // jira | confluence | mule | salesforce | domain | agent
+  "source": "jira",                 // jira | confluence | mule | salesforce | docs | domain | agent
   "path": "kb/raw/jira/PROJ-123.json",
   "title": "Meter point sync fails on bulk import",
   "entities": ["MeterPointService", "PROJ-123", "AccountUpdater"],  // cross-source anchors
