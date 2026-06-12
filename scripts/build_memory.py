@@ -97,6 +97,15 @@ def build(dest="memory.zip", seed_dir=None, wheelhouse=None) -> Path:
             else:
                 print(f"wheelhouse: dropping older duplicate {w.name}")
         wheels = [w for _, w in newest.values()]
+        for w in wheels:   # the known offline trap, loudly
+            if w.name.startswith("tree_sitter_language_pack-") \
+                    and not w.name.startswith("tree_sitter_language_pack-0."):
+                raise SystemExit(
+                    f"wheelhouse bundles {w.name}: language-pack >=1 DOWNLOADS "
+                    "grammars from GitHub on first use and cannot work in an "
+                    "offline sandbox. Delete the wheelhouse dir and re-download "
+                    "with the pinned command from README §1.B "
+                    "(tree-sitter-language-pack==0.13.0).")
         dest_wh = staging / "reference" / "wheelhouse"
         dest_wh.mkdir(parents=True)
         for w in wheels:
