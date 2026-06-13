@@ -269,8 +269,9 @@ def _download_ast_wheels(target=None) -> Path:
     if target not in _AST_TARGETS:
         raise SystemExit(
             f"--ast target {target!r} not known. Choices: "
-            f"{', '.join(sorted(_AST_TARGETS))} "
-            "(or use --wheelhouse DIR with wheels you downloaded yourself).")
+            f"{', '.join(sorted(_AST_TARGETS))}. "
+            "(If you meant an output path, put it before --ast or use "
+            "--out-dir/--profile; or use --wheelhouse DIR with your own wheels.)")
     plat, pyver = _AST_TARGETS[target]
     wh = Path(tempfile.mkdtemp(prefix="ast_wheels_"))   # fresh dir: no append trap
     cmd = [sys.executable, "-m", "pip", "download", "--only-binary", ":all:",

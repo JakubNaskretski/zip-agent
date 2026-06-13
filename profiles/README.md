@@ -15,13 +15,13 @@ profiles/
 │   ├── profile.json         # {name, title, description, overlays}
 │   ├── prompt/              # overlay fragments (optional, per marker slot)
 │   │   ├── intro.md         # → {{PROFILE_INTRO}}      (persona specialization)
-│   │   ├── operations.md    # → {{PROFILE_OPERATIONS}} (extra operations, e.g. §4.2 PROPOSE)
+│   │   ├── operations.md    # → {{PROFILE_OPERATIONS}} (extra operations, e.g. §4.2 DISCOVER)
 │   │   └── cheatsheet.md    # → {{PROFILE_CHEATSHEET}} (extra §8 cheat-sheet lines)
 │   └── seed/                # optional born-knowing KB content (see caveat below)
 ```
 
 A missing fragment leaves its marker empty. `project` ships no overlays, so its
-built prompt is the base contract verbatim; `rfp` adds the PROPOSE operation.
+built prompt is the base contract verbatim; `rfp` adds the DISCOVER operation.
 
 ## Build
 

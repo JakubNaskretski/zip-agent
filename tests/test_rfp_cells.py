@@ -116,3 +116,73 @@ def test_dtd_part_is_refused_xxe_guard():
     body = _xlsx([[("a", False)]], doctype_in_sheet=True)
     with pytest.raises(ValueError):
         rfp.read_workbook(_StubLib(body), "docs:evil.xlsx")
+
+
+def test_fromstring_refuses_late_doctype():
+    # the guard must scan the WHOLE part — a DOCTYPE pushed past 4 KB (behind a big
+    # leading comment) must still be refused, not slipped through.
+    payload = (b'<?xml version="1.0"?><!-- ' + b'x' * 5000 + b' -->'
+               b'<!DOCTYPE r [<!ENTITY a "b">]><r/>')
+    with pytest.raises(ValueError):
+        rfp._fromstring(payload)
+    assert rfp._fromstring(b'<?xml version="1.0"?><r><c>ok</c></r>') is not None
+
+
+def _assemble_xlsx(sheet_data_inner, sst_inner="", sheet_name="S") -> bytes:
+    """Build a minimal .xlsx from raw <sheetData> inner XML + raw <sst> inner XML —
+    for the cell encodings the grid helper above doesn't express (inlineStr, rich text)."""
+    M = "http://schemas.openxmlformats.org/spreadsheetml/2006/main"
+    R = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
+    PR = "http://schemas.openxmlformats.org/package/2006/relationships"
+    sheet = (f'<?xml version="1.0"?><worksheet xmlns="{M}">'
+             f'<sheetData>{sheet_data_inner}</sheetData></worksheet>')
+    sst = f'<?xml version="1.0"?><sst xmlns="{M}">{sst_inner}</sst>'
+    workbook = (f'<?xml version="1.0"?><workbook xmlns="{M}" xmlns:r="{R}">'
+                f'<sheets><sheet name="{sheet_name}" sheetId="1" r:id="rId1"/></sheets></workbook>')
+    wbrels = (f'<?xml version="1.0"?><Relationships xmlns="{PR}">'
+              f'<Relationship Id="rId1" Type="{R}/worksheet" Target="worksheets/sheet1.xml"/>'
+              f'<Relationship Id="rId2" Type="{R}/sharedStrings" Target="sharedStrings.xml"/>'
+              '</Relationships>')
+    ct = ('<?xml version="1.0"?><Types '
+          'xmlns="http://schemas.openxmlformats.org/package/2006/content-types">'
+          '<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>'
+          '<Default Extension="xml" ContentType="application/xml"/></Types>')
+    rels = (f'<?xml version="1.0"?><Relationships xmlns="{PR}">'
+            f'<Relationship Id="rId1" Type="{R}/officeDocument" Target="xl/workbook.xml"/></Relationships>')
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as z:
+        z.writestr("[Content_Types].xml", ct)
+        z.writestr("_rels/.rels", rels)
+        z.writestr("xl/workbook.xml", workbook)
+        z.writestr("xl/_rels/workbook.xml.rels", wbrels)
+        z.writestr("xl/sharedStrings.xml", sst)
+        z.writestr("xl/worksheets/sheet1.xml", sheet)
+    return buf.getvalue()
+
+
+def test_inline_string_cell():
+    body = _assemble_xlsx('<row r="1"><c r="A1" t="inlineStr"><is><t>hello</t></is></c></row>')
+    assert rfp.read_workbook(_StubLib(body), "x")["S"][0] == ["hello"]
+
+
+def test_rich_text_shared_string():
+    body = _assemble_xlsx('<row r="1"><c r="A1" t="s"><v>0</v></c></row>',
+                          sst_inner="<si><r><t>foo</t></r><r><t>bar</t></r></si>")
+    assert rfp.read_workbook(_StubLib(body), "x")["S"][0] == ["foobar"]
+
+
+def test_max_rows_caps_rows():
+    rows = "".join(f'<row r="{i+1}"><c r="A{i+1}" t="inlineStr"><is><t>r{i}</t></is></c></row>'
+                   for i in range(5))
+    assert len(rfp.read_workbook(_StubLib(_assemble_xlsx(rows)), "x", max_rows=2)["S"]) == 2
+
+
+def test_read_table_header_row_offset_and_bad_index():
+    body = _assemble_xlsx(
+        '<row r="1"><c r="A1" t="inlineStr"><is><t>title</t></is></c></row>'
+        '<row r="2"><c r="A2" t="inlineStr"><is><t>H</t></is></c></row>'
+        '<row r="3"><c r="A3" t="inlineStr"><is><t>v</t></is></c></row>')
+    t = rfp.read_table(_StubLib(body), "x", "S", header_row=1)
+    assert t["headers"] == ["H"] and t["rows"] == [["v"]]
+    # negative / out-of-range header_row -> empty, never a nonsensical split
+    assert rfp.read_table(_StubLib(body), "x", "S", header_row=-1) == {"headers": [], "rows": []}

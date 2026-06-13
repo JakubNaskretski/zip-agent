@@ -62,7 +62,7 @@ orthogonal and applies either way.
 python3 scripts/build_memory.py memory.zip
 ```
 
-**B. Full (~4 MB) — AST Apex parser, recommended.** One flag downloads the right
+**B. Full — AST Apex parser, recommended.** One flag downloads the right
 wheels for the sandbox and bundles them — **apex grammar only** (the 20 MB
 language-pack is auto-slimmed to ~0.3 MB; `pypdf` rides along for the PDF digest):
 
@@ -74,7 +74,7 @@ python3 scripts/build_memory.py --profile rfp --ast linux-x64-py311  # other san
 `--ast` needs network **at build time** (the deployed sandbox stays offline), and
 the wheels must match the **sandbox's** platform/Python, not your machine's — that
 is exactly what the target picks (`--help` lists them). The build prints
-`Apex backend in this zip: AST (5 wheels bundled)`; a wrong target degrades
+`Apex backend in this zip: AST (7 wheels bundled)`; a wrong target degrades
 harmlessly to the regex backend at boot (same as variant A).
 
 **Advanced / custom platform** — download the wheels yourself and pass

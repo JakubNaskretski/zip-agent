@@ -78,6 +78,28 @@ def test_extract_refuses_code_only_zip(tmp_path):
         extract(code_only, out=tmp_path / "out.zip")
 
 
+def test_extract_kb_index_drop_and_with_indexes(tmp_path):
+    from librarian import rebuild_indexes
+    memzip = tmp_path / "memory.zip"
+    s = boot(memzip, work_dir=tmp_path / "w")
+    s.begin("dev", "ingest one issue for the index").add_ku(jira_ku(1), body="a").commit()
+    rebuild_indexes(s.librarian, "dev", "build the search index for the test")
+    s.checkpoint()                                   # pack the index into memory.zip
+    import json as _json
+    # default: index FILES dropped AND their manifest entries removed (no dangling ref)
+    bundle = extract(memzip, out=tmp_path / "kb.zip")
+    with zipfile.ZipFile(bundle) as zf:
+        names = zf.namelist()
+        manifest = _json.loads(zf.read("manifest.json"))
+    assert not any(n.startswith("kb/indexes/") for n in names)
+    res = manifest.get("resources", manifest.get("kus", []))
+    assert not any(r.get("tier") == "indexes" for r in res)
+    # --with-indexes keeps the files
+    bundle2 = extract(memzip, out=tmp_path / "kb2.zip", with_indexes=True)
+    with zipfile.ZipFile(bundle2) as zf:
+        assert any(n.startswith("kb/indexes/") for n in zf.namelist())
+
+
 def test_ast_unknown_target_is_rejected():
     from scripts.build_memory import _download_ast_wheels
     with pytest.raises(SystemExit):                 # no network needed — fails on validation

@@ -35,6 +35,7 @@ from librarian.store import pack_zip
 STATE_DIRS = ("kb/", "dev/")
 STATE_FILES = ("manifest.json",)
 INDEX_DIR = "kb/indexes/"          # derived; rebuildable (I13)
+INDEX_TIER = "indexes"
 
 
 def _is_state(name: str) -> bool:
@@ -69,12 +70,23 @@ def extract(src_zip, out="kb-bundle.zip", with_indexes=False) -> Path:
                     dropped_index += 1
                     continue
                 zf.extract(n, staging)
-        # tally carried state by tier WHILE staging still exists (before rmtree)
+        # rewrite the carried manifest to match what's on disk, then tally by tier.
+        # When indexes are dropped (default) their KU entries must go too, or the
+        # bundle's manifest dangles (mirrors scripts/upgrade_memory.py).
         mpath = staging / "manifest.json"
         if mpath.is_file():
             try:
                 manifest = json.loads(mpath.read_text("utf-8"))
-                for r in manifest.get("resources", manifest.get("kus", [])):
+                key = "resources" if "resources" in manifest else "kus"
+                res = manifest.get(key, [])
+                if not with_indexes:
+                    res = [r for r in res
+                           if r.get("tier") != INDEX_TIER
+                           and not str(r.get("path", "")).startswith(INDEX_DIR)]
+                    manifest[key] = res
+                    mpath.write_text(
+                        json.dumps(manifest, ensure_ascii=False, indent=2), "utf-8")
+                for r in res:
                     t = r.get("tier", "?")
                     by_tier[t] = by_tier.get(t, 0) + 1
             except Exception:

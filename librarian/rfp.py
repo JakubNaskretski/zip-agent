@@ -33,19 +33,23 @@ _T = "{%s}t" % _NS["m"]
 
 
 def _fromstring(data: bytes):
-    """Parse an OOXML part, hardened against XXE / billion-laughs entity attacks.
+    """Parse an OOXML part, hardened against billion-laughs / XXE entity attacks.
 
     Office files can be client-supplied, so the XML is semi-untrusted. This engine
     is stdlib-only and offline (``defusedxml`` is not a shipped runtime dependency),
     so we harden the stdlib parser the proportionate way: legitimate OOXML parts
     never declare a DTD, and every entity-expansion attack REQUIRES a DTD/DOCTYPE —
-    so we refuse any part that declares one. With no DOCTYPE there are no custom or
-    external entities to expand, which closes both billion-laughs (entity-expansion
-    DoS) and external-entity (file/URL) reads while staying dependency-free.
+    so we refuse any part that declares one. With no DOCTYPE there are no custom
+    entities to expand, which closes billion-laughs (entity-expansion DoS); external
+    SYSTEM-entity (file/URL) reads are independently unreachable because stdlib
+    ElementTree does not resolve them (it raises). We scan the WHOLE part, not a
+    leading window — a DOCTYPE is only valid in the prolog, but real OOXML never
+    contains the literal anywhere, so a full scan has no false positives and cannot
+    be slipped past behind a large leading comment.
     """
-    if b"<!doctype" in data[:4096].lower():
+    if re.search(rb"<!doctype", data, re.IGNORECASE):
         raise ValueError("XML part declares a DTD/DOCTYPE — refused (not valid "
-                         "OOXML; blocks entity-expansion / XXE attacks)")
+                         "OOXML; blocks entity-expansion / billion-laughs attacks)")
     return ET.fromstring(data)
 
 
@@ -74,8 +78,11 @@ def _shared_strings(zf: zipfile.ZipFile) -> list:
 
 def _sheet_targets(zf: zipfile.ZipFile) -> list:
     """[(sheet_name, part_path)] in workbook order, resolved via the rels."""
-    wb = _fromstring(zf.read("xl/workbook.xml"))
-    rels = _fromstring(zf.read("xl/_rels/workbook.xml.rels"))
+    try:
+        wb = _fromstring(zf.read("xl/workbook.xml"))
+        rels = _fromstring(zf.read("xl/_rels/workbook.xml.rels"))
+    except KeyError as e:
+        raise ValueError(f"workbook missing required part {e} — not a valid .xlsx")
     rid_to_target = {rel.get("Id"): rel.get("Target")
                      for rel in rels.findall("pr:Relationship", _NS)}
     out = []
@@ -116,8 +123,13 @@ def _read_sheet(zf: zipfile.ZipFile, target: str, shared: list, max_rows) -> lis
     for i, row in enumerate(root.findall(".//m:sheetData/m:row", _NS)):
         if max_rows is not None and i >= max_rows:
             break
-        placed = [(_col_index(c.get("r", "")), _cell_value(c, shared))
-                  for c in row.findall("m:c", _NS)]
+        placed = []
+        cursor = 0
+        for c in row.findall("m:c", _NS):
+            ref = c.get("r", "")
+            ci = _col_index(ref) if re.match(r"[A-Za-z]", ref) else cursor
+            placed.append((ci, _cell_value(c, shared)))
+            cursor = ci + 1
         if not placed:
             rows.append([])
             continue
@@ -163,6 +175,6 @@ def read_table(lib, ku_id, sheet, *, header_row=0) -> dict:
     interpret the grid directly.
     """
     rows = read_workbook(lib, ku_id, sheet=sheet).get(sheet, [])
-    if not rows or header_row >= len(rows):
+    if not rows or header_row < 0 or header_row >= len(rows):
         return {"headers": [], "rows": []}
     return {"headers": rows[header_row], "rows": rows[header_row + 1:]}
