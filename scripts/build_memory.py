@@ -13,6 +13,7 @@ deliverable that lives outside the ZIP.
 from __future__ import annotations
 
 import argparse
+import re
 import shutil
 import tempfile
 import zipfile
@@ -27,6 +28,16 @@ from librarian.store import pack_zip
 
 REPO = Path(__file__).resolve().parent.parent
 _IGNORE = shutil.ignore_patterns("__pycache__", "*.pyc", "*.pyo", "*.tmp")
+
+# --- the thin agent factory: profiles are DATA, never engine code -------------
+# A profile = a prompt overlay (+ optional KB seed) over the one shared engine.
+# The registry is DERIVED from profiles/, never a hardcoded list.
+PROFILES_DIR = REPO / "profiles"
+_PROMPT_SLOTS = (   # (fragment stem, marker in profiles/_base/MASTER_PROMPT.md)
+    ("intro", "{{PROFILE_INTRO}}"),
+    ("operations", "{{PROFILE_OPERATIONS}}"),
+    ("cheatsheet", "{{PROFILE_CHEATSHEET}}"),
+)
 
 # What --wheelhouse is FOR: the optional tree-sitter AST Apex backend. The
 # vendored engine runs stdlib-only (regex backend) by default; bundling the
@@ -169,9 +180,72 @@ def build(dest="memory.zip", seed_dir=None, wheelhouse=None, slim=True) -> Path:
     return pack_zip(staging, dest)
 
 
+def list_profiles() -> list:
+    """Available profiles, DERIVED from the profiles/ directory — never a
+    hardcoded list. A profile is any subdir of profiles/ other than _base."""
+    if not PROFILES_DIR.is_dir():
+        return []
+    return sorted(p.name for p in PROFILES_DIR.iterdir()
+                  if p.is_dir() and not p.name.startswith("_"))
+
+
+def assemble_prompt(profile) -> str:
+    """Fill the shared base contract's overlay markers with a profile's
+    prompt/<slot>.md fragments. A missing fragment leaves its marker empty (its
+    line is removed cleanly). The assembled prompt is what ships beside the ZIP."""
+    base_path = PROFILES_DIR / "_base" / "MASTER_PROMPT.md"
+    if not base_path.is_file():
+        raise SystemExit(f"missing base prompt: {base_path}")
+    out = base_path.read_text("utf-8")
+    pdir = PROFILES_DIR / profile / "prompt"
+    for slot, marker in _PROMPT_SLOTS:
+        frag_path = pdir / f"{slot}.md"
+        frag = frag_path.read_text("utf-8").strip() if frag_path.is_file() else ""
+        if frag:
+            # Each marker sits ALONE on its line; swapping just the token for the
+            # fragment keeps the surrounding blank lines exactly as authored. No
+            # blank-run collapse is needed — so fenced code blocks (the cheatsheet
+            # slot lives inside one) are never reflowed, and a fragment may carry
+            # its own blank lines safely.
+            out = out.replace(marker, frag)
+        else:   # drop the unused marker's whole line + one trailing blank line
+            out = re.sub(rf"^[ \t]*{re.escape(marker)}[ \t]*\n\n?", "", out,
+                         flags=re.MULTILINE)
+    if "{{PROFILE_" in out:
+        raise SystemExit(f"profile {profile!r}: an unfilled {{PROFILE_*}} marker "
+                         "remains in the assembled prompt")
+    return out
+
+
+def build_profile(profile, out_dir=None, wheelhouse=None, slim=True):
+    """Build one agent variant: a CLEAN memory.zip (engine + optional seed, no
+    ingested data) plus the assembled MASTER_PROMPT.md BESIDE it (never inside
+    the ZIP). Returns (out_dir, memzip_path, prompt_path)."""
+    available = list_profiles()
+    if profile not in available:
+        raise SystemExit(f"unknown profile {profile!r}; available: "
+                         f"{', '.join(available) or '(none)'}")
+    out_dir = Path(out_dir) if out_dir else (REPO / "dist" / profile)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    seed = PROFILES_DIR / profile / "seed"
+    seed_dir = str(seed) if seed.is_dir() and any(seed.iterdir()) else None
+    memzip = build(out_dir / "memory.zip", seed_dir=seed_dir,
+                   wheelhouse=wheelhouse, slim=slim)
+    prompt_path = out_dir / "MASTER_PROMPT.md"
+    prompt_path.write_text(assemble_prompt(profile), "utf-8")
+    return out_dir, memzip, prompt_path
+
+
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
     ap.add_argument("out", nargs="?", default="memory.zip")
+    ap.add_argument("--profile", default=None,
+                    help="build a named agent variant from profiles/<name>/ "
+                         "(emits dist/<name>/memory.zip + its assembled MASTER_PROMPT.md)")
+    ap.add_argument("--list-profiles", action="store_true",
+                    help="list the available profiles (derived from profiles/) and exit")
+    ap.add_argument("--out-dir", default=None,
+                    help="output directory for a --profile build (default: dist/<name>/)")
     ap.add_argument("--seed", default=None, help="directory of initial KB content to include")
     ap.add_argument("--no-slim", action="store_true",
                     help="bundle the language-pack wheel with ALL grammars "
@@ -180,7 +254,22 @@ if __name__ == "__main__":
                     help="directory of *.whl files to bundle for offline install at boot "
                          "(use: the tree-sitter AST backend; see module docstring)")
     args = ap.parse_args()
-    out = build(args.out, args.seed, args.wheelhouse, slim=not args.no_slim)
-    print(f"built {out}")
-    print("reminder: paste MASTER_PROMPT.md into the agent builder's instructions "
-          "field — it is NOT inside the ZIP.")
+
+    if args.list_profiles:
+        for name in list_profiles():
+            print(name)
+        raise SystemExit(0)
+
+    if args.profile:
+        out_dir, memzip, prompt_path = build_profile(
+            args.profile, args.out_dir, args.wheelhouse, slim=not args.no_slim)
+        print(f"built profile '{args.profile}':")
+        print(f"  memory.zip     {memzip}")
+        print(f"  MASTER_PROMPT  {prompt_path}")
+        print("deploy: paste MASTER_PROMPT.md into the agent builder's instructions "
+              "field, then upload memory.zip. The prompt is NOT inside the ZIP.")
+    else:
+        out = build(args.out, args.seed, args.wheelhouse, slim=not args.no_slim)
+        print(f"built {out}")
+        print("reminder: paste MASTER_PROMPT.md into the agent builder's instructions "
+              "field — it is NOT inside the ZIP.")

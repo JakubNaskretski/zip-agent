@@ -14,8 +14,8 @@ This repo is the agent's **engine and build** — not a research write-up.
 |------|------------|
 | [`librarian/`](librarian/) | The engine — transactional KB mutation (the Librarian), manifest, schema, changelog, bootstrap, retrieve/index, and [`digest/`](librarian/digest/) source adapters (Salesforce, Mule, Jira, Confluence, office documents). Real importable modules, `pytest`-tested. Zero runtime dependencies (stdlib only). |
 | [`vendor/graphbuilder/`](vendor/graphbuilder/) | Vendored Salesforce/OmniStudio metadata-graph parsing engine (plus the Mule/Jira/Confluence extractors and the read-only Jira/Confluence collectors), used by the [`digest/`](librarian/digest/) adapters. |
-| [`MASTER_PROMPT.md`](MASTER_PROMPT.md) | The agent's persona + operating protocols — pasted into the agent builder's instructions field, **outside** the ZIP. |
-| [`scripts/build_memory.py`](scripts/build_memory.py) | Builds the deployable `memory.zip` — the engine packaged inside its own memory. |
+| [`profiles/`](profiles/) | The thin agent factory: the shared base prompt (`profiles/_base/MASTER_PROMPT.md`) + per-use-case overlays (`project`, `rfp`). `build_memory.py --profile <name>` assembles each variant's persona + protocols into a `MASTER_PROMPT.md` pasted into the agent builder's instructions field, **outside** the ZIP. |
+| [`scripts/build_memory.py`](scripts/build_memory.py) | Builds the deployable `memory.zip` (the engine packaged inside its own memory); `--profile <name>` builds a named agent variant + its assembled prompt into `dist/<name>/`. |
 | [`tests/`](tests/) | Pytest suite for the engine and digests. |
 | [`docs/`](docs/) | How the agent works and how to use it — [`ARCHITECTURE.md`](docs/ARCHITECTURE.md) (the spec the code implements), [`INDEXING.md`](docs/INDEXING.md) (per-source retrieval strategy), [`retrieving-salesforce-samples.md`](docs/retrieving-salesforce-samples.md) (feeding it test data). |
 
@@ -49,6 +49,12 @@ the dev test suite targets 3.11+). The agent side only needs a code-interpreter
 sandbox that can run Python and keep one file (`memory.zip`) between sessions.
 
 ### 1. Build the deployable ZIP — pick A or B
+
+The commands below build a generic `memory.zip`. To build a **named agent
+variant** instead, add `--profile <name>` (e.g. `rfp` or `project`): it emits
+`dist/<name>/memory.zip` plus that variant's assembled `MASTER_PROMPT.md` (see
+[`profiles/README.md`](profiles/README.md)). The A/B wheelhouse choice below is
+orthogonal and applies either way.
 
 **A. Basic — regex Apex parser:**
 
@@ -86,10 +92,13 @@ exactly as variant A.
 
 ### 2. Set up the agent
 
-1. Paste **`MASTER_PROMPT.md`** into the agent builder's *instructions* field —
-   it lives outside the ZIP and must be re-pasted whenever it changes.
-2. Upload `memory.zip` to the agent's workspace. That file **is** the memory:
-   back it up, version it, never hand-edit its contents.
+1. Build a profile (e.g. `python3 scripts/build_memory.py --profile rfp`) and
+   paste its assembled **`dist/<profile>/MASTER_PROMPT.md`** into the agent
+   builder's *instructions* field — it lives outside the ZIP and must be
+   re-pasted whenever it changes. See [`profiles/README.md`](profiles/README.md).
+2. Upload that profile's **`dist/<profile>/memory.zip`** to the agent's
+   workspace. That file **is** the memory: back it up, version it, never
+   hand-edit its contents.
 
 On first contact the agent runs its BOOT protocol (unpack → verify manifest →
 auto-install the wheelhouse if present) and reports what its memory contains.
