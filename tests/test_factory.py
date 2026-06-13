@@ -76,3 +76,17 @@ def test_extract_refuses_code_only_zip(tmp_path):
     code_only = build(tmp_path / "code.zip")    # an engine build: no manifest/state
     with pytest.raises(SystemExit):
         extract(code_only, out=tmp_path / "out.zip")
+
+
+def test_ast_unknown_target_is_rejected():
+    from scripts.build_memory import _download_ast_wheels
+    with pytest.raises(SystemExit):                 # no network needed — fails on validation
+        _download_ast_wheels("totally-bogus-target")
+
+
+def test_ast_presets_and_offline_pin():
+    from scripts.build_memory import _AST_TARGETS, _AST_DEFAULT_TARGET, _AST_WHEEL_SPECS
+    assert _AST_DEFAULT_TARGET in _AST_TARGETS       # the default is a real target
+    # the offline-critical pin must be EXACTLY 0.13.0 (pack 1.x is unusable offline)
+    assert "tree-sitter-language-pack==0.13.0" in _AST_WHEEL_SPECS
+    assert any(s.startswith("pypdf") for s in _AST_WHEEL_SPECS)

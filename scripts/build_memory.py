@@ -15,6 +15,7 @@ from __future__ import annotations
 import argparse
 import re
 import shutil
+import subprocess
 import tempfile
 import zipfile
 from pathlib import Path
@@ -38,6 +39,29 @@ _PROMPT_SLOTS = (   # (fragment stem, marker in profiles/_base/MASTER_PROMPT.md)
     ("operations", "{{PROFILE_OPERATIONS}}"),
     ("cheatsheet", "{{PROFILE_CHEATSHEET}}"),
 )
+
+# --- AST Apex backend: one friendly --ast flag instead of a wall of pip flags ----
+# The canonical wheel set lives HERE (single source; mirrors README §1.B). The
+# 0.13.0 pin is REQUIRED — the last language-pack release that bundles grammars in
+# the wheel; pack 1.x downloads them at runtime (impossible in the offline sandbox,
+# and build() refuses it). The builder slims the pack to the apex grammar only
+# (~20 MB -> ~0.3 MB) unless --no-slim.
+_AST_WHEEL_SPECS = (
+    "tree-sitter>=0.25.2,<1",
+    "tree-sitter-language-pack==0.13.0",
+    "pypdf>=4,<7",
+)
+# friendly target presets -> (pip --platform tag, --python-version). The wheels
+# must match the SANDBOX, not the build machine — that is the whole point of the
+# presets. Default is the common Azure-style linux x86_64 / py3.12 sandbox.
+_AST_TARGETS = {
+    "linux-x64-py312": ("manylinux2014_x86_64", "312"),
+    "linux-x64-py311": ("manylinux2014_x86_64", "311"),
+    "linux-x64-py310": ("manylinux2014_x86_64", "310"),
+    "linux-arm64-py312": ("manylinux2014_aarch64", "312"),
+    "linux-arm64-py311": ("manylinux2014_aarch64", "311"),
+}
+_AST_DEFAULT_TARGET = "linux-x64-py312"
 
 # What --wheelhouse is FOR: the optional tree-sitter AST Apex backend. The
 # vendored engine runs stdlib-only (regex backend) by default; bundling the
@@ -236,6 +260,34 @@ def build_profile(profile, out_dir=None, wheelhouse=None, slim=True):
     return out_dir, memzip, prompt_path
 
 
+def _download_ast_wheels(target=None) -> Path:
+    """Download the tree-sitter AST + pypdf wheels for the SANDBOX platform into a
+    fresh temp dir and return it (to pass as the wheelhouse). This is what ``--ast``
+    runs: it hides the platform tags, the version pins, and the always-use-a-clean-
+    dir rule. Needs network AT BUILD TIME (the deployed sandbox stays offline)."""
+    target = target or _AST_DEFAULT_TARGET
+    if target not in _AST_TARGETS:
+        raise SystemExit(
+            f"--ast target {target!r} not known. Choices: "
+            f"{', '.join(sorted(_AST_TARGETS))} "
+            "(or use --wheelhouse DIR with wheels you downloaded yourself).")
+    plat, pyver = _AST_TARGETS[target]
+    wh = Path(tempfile.mkdtemp(prefix="ast_wheels_"))   # fresh dir: no append trap
+    cmd = [sys.executable, "-m", "pip", "download", "--only-binary", ":all:",
+           "--platform", plat, "--python-version", pyver, "-d", str(wh),
+           *_AST_WHEEL_SPECS]
+    print(f"--ast {target}: downloading AST wheels for {plat} / py{pyver} …")
+    res = subprocess.run(cmd, capture_output=True, text=True)
+    if res.returncode != 0:
+        shutil.rmtree(wh, ignore_errors=True)
+        raise SystemExit(
+            f"--ast {target}: pip could not fetch the AST wheels for this platform.\n"
+            f"  {' '.join(cmd)}\n\n{res.stderr.strip()}\n\n"
+            "Check the target matches your sandbox, or download the wheels yourself "
+            "and use --wheelhouse (see README §1.B).")
+    return wh
+
+
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
     ap.add_argument("out", nargs="?", default="memory.zip")
@@ -253,6 +305,12 @@ if __name__ == "__main__":
     ap.add_argument("--wheelhouse", default=None,
                     help="directory of *.whl files to bundle for offline install at boot "
                          "(use: the tree-sitter AST backend; see module docstring)")
+    ap.add_argument("--ast", nargs="?", const=_AST_DEFAULT_TARGET, default=None,
+                    metavar="TARGET",
+                    help="bundle the tree-sitter AST Apex backend (+pypdf), auto-downloading "
+                         "the right wheels for the SANDBOX — the easy alternative to "
+                         f"--wheelhouse. Optional target (default {_AST_DEFAULT_TARGET}); "
+                         f"choices: {', '.join(sorted(_AST_TARGETS))}.")
     args = ap.parse_args()
 
     if args.list_profiles:
@@ -260,16 +318,28 @@ if __name__ == "__main__":
             print(name)
         raise SystemExit(0)
 
-    if args.profile:
-        out_dir, memzip, prompt_path = build_profile(
-            args.profile, args.out_dir, args.wheelhouse, slim=not args.no_slim)
-        print(f"built profile '{args.profile}':")
-        print(f"  memory.zip     {memzip}")
-        print(f"  MASTER_PROMPT  {prompt_path}")
-        print("deploy: paste MASTER_PROMPT.md into the agent builder's instructions "
-              "field, then upload memory.zip. The prompt is NOT inside the ZIP.")
-    else:
-        out = build(args.out, args.seed, args.wheelhouse, slim=not args.no_slim)
-        print(f"built {out}")
-        print("reminder: paste MASTER_PROMPT.md into the agent builder's instructions "
-              "field — it is NOT inside the ZIP.")
+    if args.ast and args.wheelhouse:
+        raise SystemExit("--ast and --wheelhouse are mutually exclusive — --ast IS the "
+                         "wheelhouse (it downloads it for you).")
+    wheelhouse, _ast_tmp = args.wheelhouse, None
+    if args.ast:
+        _ast_tmp = _download_ast_wheels(args.ast)
+        wheelhouse = str(_ast_tmp)
+
+    try:
+        if args.profile:
+            out_dir, memzip, prompt_path = build_profile(
+                args.profile, args.out_dir, wheelhouse, slim=not args.no_slim)
+            print(f"built profile '{args.profile}':")
+            print(f"  memory.zip     {memzip}")
+            print(f"  MASTER_PROMPT  {prompt_path}")
+            print("deploy: paste MASTER_PROMPT.md into the agent builder's instructions "
+                  "field, then upload memory.zip. The prompt is NOT inside the ZIP.")
+        else:
+            out = build(args.out, args.seed, wheelhouse, slim=not args.no_slim)
+            print(f"built {out}")
+            print("reminder: paste MASTER_PROMPT.md into the agent builder's instructions "
+                  "field — it is NOT inside the ZIP.")
+    finally:
+        if _ast_tmp:
+            shutil.rmtree(_ast_tmp, ignore_errors=True)

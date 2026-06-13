@@ -62,33 +62,36 @@ orthogonal and applies either way.
 python3 scripts/build_memory.py memory.zip
 ```
 
-**B. Full (~3 MB) — AST Apex parser, recommended. BOTH commands, in order**
-(wheels must match the **sandbox's** platform/Python — the example is
-linux x86_64 / Python 3.12 — not your machine's):
+**B. Full (~4 MB) — AST Apex parser, recommended.** One flag downloads the right
+wheels for the sandbox and bundles them — **apex grammar only** (the 20 MB
+language-pack is auto-slimmed to ~0.3 MB; `pypdf` rides along for the PDF digest):
+
+```bash
+python3 scripts/build_memory.py --profile rfp --ast                  # linux x86_64 / py3.12 (default)
+python3 scripts/build_memory.py --profile rfp --ast linux-x64-py311  # other sandbox? --ast <target>
+```
+
+`--ast` needs network **at build time** (the deployed sandbox stays offline), and
+the wheels must match the **sandbox's** platform/Python, not your machine's — that
+is exactly what the target picks (`--help` lists them). The build prints
+`Apex backend in this zip: AST (5 wheels bundled)`; a wrong target degrades
+harmlessly to the regex backend at boot (same as variant A).
+
+**Advanced / custom platform** — download the wheels yourself and pass
+`--wheelhouse DIR` instead. The `0.13.0` language-pack pin is REQUIRED: it is the
+last release that bundles all grammars in the wheel — pack 1.x downloads them from
+GitHub at runtime, which an offline sandbox cannot do, and the build refuses it:
 
 ```bash
 rm -rf wheelhouse/        # pip download APPENDS — always start clean
 python3 -m pip download --only-binary :all: --platform manylinux2014_x86_64 \
     --python-version 312 -d wheelhouse/ \
     "tree-sitter>=0.25.2,<1" "tree-sitter-language-pack==0.13.0" "pypdf>=4,<7"
-python3 scripts/build_memory.py --wheelhouse wheelhouse/ memory.zip
+python3 scripts/build_memory.py --profile rfp --wheelhouse wheelhouse/
 ```
 
-The result is **~4 MB**: the builder automatically slims the language-pack
-wheel to the one grammar the agent uses (apex; 20 MB -> 0.3 MB — pass
-`--no-slim` to keep all grammars), and `pypdf` rides along for the PDF digest.
-A pack 1.x wheel in the dir is refused outright (it downloads grammars at
-runtime — unusable offline).
-
-Sanity check B before uploading: `unzip -l memory.zip | grep wheelhouse` must
-list five wheels including `tree_sitter_language_pack-0.13.0`. The 0.13 pin is
-deliberate and REQUIRED for offline sandboxes: it is the last release that
-bundles all grammars in the wheel — pack 1.x downloads grammars from GitHub on
-first use, which an offline sandbox cannot do (its node API difference is
-handled by the engine's compatibility shim either way). The build
-output also states which variant you produced. A wrong-platform wheelhouse
-degrades harmlessly at boot: the agent falls back to the regex backend,
-exactly as variant A.
+Sanity check before uploading: `unzip -l dist/rfp/memory.zip | grep wheelhouse`
+must include `tree_sitter_language_pack-0.13.0` (the load-bearing offline pin).
 
 ### 2. Set up the agent
 
