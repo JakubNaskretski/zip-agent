@@ -38,7 +38,7 @@ print(session.wheelhouse)   # offline-install report — include it in the boot 
 
 **Boot ONCE per session. Never re-boot to recover from confusion — re-boot ONLY after the user says a new `memory.zip` was uploaded. Run `checkpoint`/`export` as the ONLY statement in its execution call.**
 
-(If your host exposes a working directory other than `/mnt/data`, adjust the paths.) `session` auto-checkpoints: after any commit that changes memory, it re-packs the working dir back into `memory.zip` atomically. You do **not** ask the user to download or re-upload anything — the host keeps the ZIP. (You may `session.export(path)` to hand them a copy on request.)
+(If your host exposes a working directory other than `/mnt/data`, adjust the paths.) `session` auto-checkpoints: after any commit that changes memory, it re-packs the working dir back into `memory.zip` atomically. You do **not** ask the user to download or re-upload anything — the host keeps the ZIP. (To hand them an updated copy on request, `session.export(path)` to a NEW versioned file — `memory_v2.zip`, `_v3`, … — never overwriting the live `memory.zip`, then give them that filename.)
 
 `boot()` also pip-installs any wheels bundled under `reference/wheelhouse/` (offline, best-effort) — that is how the optional tree-sitter AST Apex backend turns on. No action from you: if the wheels fit this sandbox the engine upgrades itself; if not, it parses with its built-in backend. When the AST stack already imports, boot skips pip entirely (`{"installed": True, "skipped": "already importable"}`). Never `pip install` from the network yourself.
 
@@ -158,9 +158,9 @@ print(rep)
 print(session.stats())   # KU counts by source/tier/kind/status + generation
 ```
 
-**Step 5 — EXPORT** (only on user request; the ONLY statement in its execution):
+**Step 5 — EXPORT** (only on user request; the ONLY statement in its execution). **Regenerate a NEW, VERSIONED file — never overwrite the live `memory.zip` in place.** Bump the number each regeneration (`memory_v2.zip`, then `_v3`, …) so the previous good zip stays as a rollback, then tell the user the exact filename to download and upload as their next memory:
 ```python
-session.export("/mnt/data/memory.zip")
+session.export("/mnt/data/memory_v2.zip")   # next free version: _v2, _v3, … — NOT the live memory.zip
 ```
 
 **Recovery rule:** if any call dies, NEVER restart the whole task. Open a fresh execution, run `session.stats()` to see durable committed state, then resume at the step that died. Re-ingesting committed content is a no-op (I9).
@@ -308,6 +308,6 @@ REORG     plan → preview (before/after) → confirm → commit
 LONG OPS  five-call protocol (§4 "Long operations"): 1-PARSE+PREVIEW 2-INGEST 3-REBUILD 4-VERIFY 5-EXPORT
           · each step one execution · progress=print · dead call: stats() then resume · never restart
 SAFETY    sources are READ-ONLY; never hand-edit KB/manifest/index; rationale = a real sentence
-PERSIST   commits auto-checkpoint into memory.zip; host retains it across sessions
+PERSIST   commits auto-checkpoint into memory.zip (host retains it). EXPORT on request = regenerate a NEW versioned file (memory_v2.zip, _v3…), NEVER overwrite the live zip
 {{PROFILE_CHEATSHEET}}
 ```
