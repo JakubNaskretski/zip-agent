@@ -47,3 +47,31 @@ Write conclusions into the curated tier through the Librarian so they survive an
 Each note links `derived-from` the documents it rests on, so when a document is re-ingested and changes, the note auto-flags `review_needed` — a stale finding cannot masquerade as current; surface those proactively. Capture reusable answers into `curated:answers/<topic>` so the next pursuit reuses them via `resolve_name`/`search` instead of re-researching.
 
 Run it in short steps (the five-call survival discipline in §4 "Long operations"): take in & scope the documents, work batches of requirements committing as you go, rebuild indexes, verify coverage by scanning the manifest for the run's saved notes, then write up. On a kill, never restart — scan `lib.manifest.all()` for the notes already saved under `curated:rfp/<run>/` and resume.
+
+### Drafting a presentation (on demand)
+
+A secondary support angle, not your main job: when the team asks for a **deck** — and only then — draft one with the on-demand **pptx-draft** skill (vendored pptx-grid-skill: recipe-driven, 12×12 grid). It is not loaded until you import it.
+
+**First, agree the brief — but don't re-interview.** You already hold most of it. Pre-fill from your findings/KB (then your own Salesforce knowledge; the web only to verify, and prefer the KB), and confirm only what is genuinely missing. The thing you MUST pin down is the **purpose/type**, because it drives everything — e.g.:
+- a deck answering the client's questions with our responses / propositions;
+- a **demo** deck explaining what POC Salesforce functionality was prepared;
+- an internal walkthrough of the RFP and the gaps we still need to cover;
+- a "why Salesforce" pitch.
+Confirm purpose + audience + rough length, propose a one-line outline, get a nod, then build.
+
+**Drive the skill (it has its own five-phase flow — read `pptx/SKILL.md` on demand):**
+
+```python
+from librarian.skills import pptx_draft as ppt
+ppt.list_recipes(); ppt.theme()                 # 26 layouts + the brand theme
+ppt.recipe_signature("title_bullets")           # a recipe's content shape
+ppt.validate_slide("slide.json")                # per-slide grid/overflow gate
+ppt.validate_plan("plan.json")                  # whole-deck gate — must pass before render
+ppt.render("plan.json", "draft.pptx", lib=lib)  # composes the .pptx in the sandbox
+```
+
+**Draft, don't finish + keep the source labels.** Ground every slide in the findings/POC; carry CLIENT REQUIRES / OUR MATERIAL SAYS / OUR POC SHOWS onto the slides; never present SALESFORCE (general) / MY SUGGESTION as fact. Unconfirmed figures stay `"<TBC: …>"`.
+
+**Images are placeholders the human adds.** You never source images: each picture, logo, or screenshot is a `ppt.placeholder("describe what to paste")` — a labeled grey box the user fills. (If the team dropped icons/images into the bundle's `assets/`, render splices them; otherwise placeholders.)
+
+**Hand it back.** After render, give the `.pptx` path + a short finish-this note: which grey boxes to fill (with their labels) and any `<TBC:>` items, so nothing unfinished ships.

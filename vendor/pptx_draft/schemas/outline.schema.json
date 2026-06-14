@@ -1,0 +1,61 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Outline",
+  "description": "Output of Phase 2. Slide-by-slide plan (titles + recipe + one-sentence summary) approved by user before Phase 3 begins.",
+  "type": "object",
+  "required": ["deck_title", "slides"],
+  "additionalProperties": false,
+  "properties": {
+    "deck_title": {"type": "string"},
+    "slides": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["id", "recipe", "summary"],
+        "additionalProperties": false,
+        "properties": {
+          "id": {"type": "integer", "minimum": 1},
+          "recipe": {
+            "type": "string",
+            "enum": [
+              "title_only",
+              "section_divider",
+              "title_bullets",
+              "title_hero_image",
+              "text_image_split",
+              "two_col_text",
+              "comparison",
+              "metric_strip",
+              "single_metric",
+              "big_statement",
+              "agenda",
+              "numbered_list_6up",
+              "chart_with_takeaway",
+              "chart_full",
+              "table_full",
+              "table_with_callout",
+              "three_up",
+              "four_up",
+              "six_up",
+              "matrix_2x2",
+              "two_card_row",
+              "three_card_row",
+              "quote",
+              "cta_closing",
+              "team_strip",
+              "team_grid_2x2",
+              "free"
+            ]
+          },
+          "summary": {
+            "type": "string",
+            "minLength": 5,
+            "maxLength": 200,
+            "description": "One sentence describing what this slide contains."
+          }
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,159 @@
+# Corporate theme — MVP single theme.
+# Single source of truth for palette, fonts, and type scale.
+# render.py and reader.py both resolve against this file.
+
+palette:
+  # Base
+  background:     "#FFFFFF"   # 255-255-255 — slide bg
+  surface:        "#EBEBEB"   # 235-235-235 — alt panels, zebra rows
+  text_primary:   "#000000"   # 0-0-0       — body + headings
+  text_secondary: "#A1A8B3"   # 161-168-179 — captions, muted labels
+  text_inverse:   "#FFFFFF"
+
+  # Accent oranges (charts, tables, emphasis)
+  accent_primary:   "#FC5108" # 252-81-8    — strongest accent (matches source deck exactly)
+  accent_secondary: "#FE7C39" # 254-124-57  — medium; section numerals
+  accent_tertiary:  "#FFAA72" # 255-170-114 — light accent / soft fills
+
+  # Neutrals
+  neutral_strong: "#A1A8B3"   # 161-168-179
+  neutral_medium: "#B5BCC4"   # 181-188-196
+  neutral_soft:   "#CBD1D6"   # 203-209-214
+
+tints:
+  # Lighter orange wash — usable as chart fills, table headers, banner bg
+  orange_30: "#FFCDA8"        # 255-205-168
+  orange_60: "#FFE8D4"        # 255-232-212
+  orange_90: "#FFF5ED"        # 255-245-237 — near-bg, very soft
+
+  # Lighter grey wash — usable as zebra rows, subtle dividers
+  grey_30:   "#DFE3E6"        # 223-227-230
+  grey_60:   "#EEEFF1"        # 238-239-241
+  grey_90:   "#F5F7F8"        # 245-247-248 — near-bg
+
+status:
+  positive: "#059669"         # 5-150-105   — green
+  warning:  "#E9B01F"         # 233-176-31  — yellow
+  negative: "#E62626"         # 230-38-38   — red
+
+fonts:
+  heading: "Georgia"
+  body:    "Arial"
+  mono:    "Courier New"
+
+# Type scale — referenced by component renderers + measure_text.
+# Sizes informed by the corporate reference deck:
+#   section number = 300pt (deck uses 350pt; we pull back slightly to
+#                    leave room for header strip), title = 48pt,
+#                    h2 = 28pt, body = 15pt, big statement = 66pt,
+#                    hero stat = 150pt.
+# "font" keys into the fonts: map above.
+type_scale:
+  section_number:
+    # Matches the source brand deck (Section Header layouts use 350pt
+    # in a body placeholder, inheriting +mn-lt = Arial). Uses body font
+    # for the same lining-figures reason as hero_metric: Georgia's
+    # old-style figures (3/4/5/7/9 have descenders) make multi-digit
+    # numerals look misaligned at this size.
+    # Weight 400 (regular) — source's b="0" on all big number runs.
+    size_pt: 350
+    weight: 400
+    line_height: 1.00
+    font: body
+  h1:
+    # Source uses bold=0 for 48pt titles. Sheer size + Georgia's serif
+    # forms read as title without needing bold.
+    size_pt: 48
+    weight: 400
+    line_height: 1.10
+    font: heading
+  h2:
+    size_pt: 28
+    weight: 700
+    line_height: 1.20
+    font: heading
+  h3:
+    size_pt: 18
+    weight: 700
+    line_height: 1.25
+    font: heading
+  body:
+    size_pt: 15
+    weight: 400
+    line_height: 1.40
+    font: body
+  caption:
+    size_pt: 11
+    weight: 400
+    line_height: 1.30
+    font: body
+  metric_value:
+    size_pt: 48
+    weight: 400              # regular — source's big numbers are bold=0
+    line_height: 1.00
+    font: heading
+  metric_label:
+    size_pt: 12
+    weight: 400
+    line_height: 1.30
+    font: body
+  quote:
+    size_pt: 28
+    weight: 400
+    line_height: 1.30
+    font: heading
+  hero_metric:
+    # For single_metric — one giant number, takes ~half the slide vertically.
+    # Uses 'body' (Arial) intentionally because Georgia uses old-style figures
+    # — digits 3/4/5/7/9 have descenders below the baseline and look misaligned
+    # next to 0/1/2/6/8/$/M. Arial has lining figures so all digits sit on the
+    # same baseline. Weight 400 (regular) — matches source bold=0.
+    size_pt: 150
+    weight: 400
+    line_height: 1.00
+    font: body
+  mega_metric:
+    # For single_metric size='mega' — even bigger than hero. Source's "Text
+    # and Large Stat" layout uses 200pt; this is for stats that should
+    # dominate the slide entirely.
+    size_pt: 200
+    weight: 400
+    line_height: 1.00
+    font: body
+  sub_metric:
+    # For single_metric.sub_value — a secondary stat below the hero number
+    # (e.g. "$23.8M" + "+24% YoY" below). Source's "Big Data" layout uses
+    # 66pt for this.
+    size_pt: 66
+    weight: 400
+    line_height: 1.05
+    font: body
+  numbered_item:
+    # For numbered_list_6up's big numerals — source's "Six Content Six
+    # Numbers" layout uses 115pt for each item's number.
+    size_pt: 115
+    weight: 400
+    line_height: 1.00
+    font: body
+  statement:
+    # For big_statement — large declarative text, smaller than section_number,
+    # bigger than h1. Centered or left, optional sub-line beneath.
+    size_pt: 66
+    weight: 400
+    line_height: 1.10
+    font: heading
+
+# Grid metrics — used by grid.py.
+# Canvas is 16:9; coordinates are fractional (0..1).
+grid:
+  cols: 12                   # inner content cells (horizontal)
+  rows: 12                   # inner content cells (vertical)
+  left_margin_cols: 0.5      # half-cell margin on the left
+  right_margin_cols: 0.5     # half-cell margin on the right
+  top_strip_rows: 1          # one-row strip at the top (header / logo)
+  bottom_strip_rows: 1       # one-row strip at the bottom (footer / page no.)
+
+canvas:
+  # Canvas size — defaults to widescreen 16:9 at 13.333" x 7.5" (PowerPoint's standard).
+  width_in: 13.333
+  height_in: 7.5

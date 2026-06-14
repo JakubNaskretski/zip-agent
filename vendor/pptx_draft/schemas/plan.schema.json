@@ -1,0 +1,97 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Plan",
+  "description": "Output of Phase 3. Renderable deck specification. Consumed by render.py.",
+  "type": "object",
+  "required": ["version", "slides"],
+  "additionalProperties": false,
+  "properties": {
+    "version": {"const": "1"},
+    "deck_title": {"type": "string"},
+    "use_template_opener": {
+      "type": "boolean",
+      "default": true,
+      "description": "If true (default), render.py prepends the configured opening-slide.pptx template as slide 1. Plan's slides list then starts at the first content slide. If false, agent's slide id=1 is composed as the cover."
+    },
+    "slides": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["id", "recipe"],
+        "additionalProperties": false,
+        "properties": {
+          "id": {"type": "integer", "minimum": 1},
+          "background": {
+            "type": "string",
+            "enum": ["white", "light_grey", "light_orange"],
+            "default": "white"
+          },
+          "recipe": {
+            "type": "string",
+            "enum": [
+              "title_only",
+              "section_divider",
+              "title_bullets",
+              "title_hero_image",
+              "text_image_split",
+              "two_col_text",
+              "comparison",
+              "metric_strip",
+              "single_metric",
+              "big_statement",
+              "agenda",
+              "numbered_list_6up",
+              "chart_with_takeaway",
+              "chart_full",
+              "table_full",
+              "table_with_callout",
+              "three_up",
+              "four_up",
+              "six_up",
+              "matrix_2x2",
+              "two_card_row",
+              "three_card_row",
+              "quote",
+              "cta_closing",
+              "team_strip",
+              "team_grid_2x2",
+              "free"
+            ]
+          },
+          "params": {
+            "type": "object",
+            "description": "Recipe-specific parameters (e.g., metric_strip count, comparison labels). Each recipe documents its own param shape."
+          },
+          "content": {
+            "type": "object",
+            "description": "Recipe-specific content slots filled with strings, arrays, or component-typed payloads."
+          },
+          "components": {
+            "type": "array",
+            "description": "Only used when recipe == 'free'. Direct list of component placements.",
+            "items": {
+              "type": "object",
+              "required": ["type", "grid", "content"],
+              "properties": {
+                "type": {"type": "string"},
+                "grid": {
+                  "type": "object",
+                  "properties": {
+                    "row": {"type": "integer"},
+                    "col": {"type": "integer"},
+                    "row_span": {"type": "integer"},
+                    "col_span": {"type": "integer"},
+                    "strip": {"type": "string", "enum": ["header", "footer"]}
+                  }
+                },
+                "content": {},
+                "style_overrides": {"type": "object"}
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
