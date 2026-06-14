@@ -691,3 +691,66 @@ def test_strip_media_false_keeps_original(tmp_path):
 
     stored = lib.read_body("docs:slides/Acme Media Deck.pptx")
     assert stored == original
+
+
+# --------------------------------------------------------------------------- #
+# graph accumulation across ingests (the data-loss fix — see _graphmerge)
+# --------------------------------------------------------------------------- #
+def _docfiles(g):
+    return {n["source_path"] for n in g["nodes"] if n["type"] == "docfile"}
+
+
+def test_second_digest_accumulates_the_graph(tmp_path):
+    """The reported bug: a 2nd ingest must NOT drop earlier digestions from the
+    structure graph. After ingesting a folder then a separate single doc, all
+    three documents remain in the graph (and their raw KUs are untouched)."""
+    lib = Librarian(Store(tmp_path / "mem"))
+    office.ingest_office(lib, make_docs_dir(tmp_path), "dev",
+                         "ingest sample office documents")
+    assert _docfiles(office.load_graph(lib)) == {DOCX_REL, XLSX_REL}
+
+    later = _docx(tmp_path / "later" / "Roadmap.docx",
+                  _para("Roadmap", style="Heading1"), _para("Q3 plans."))
+    office.ingest_office(lib, later, "dev", "ingest a later single office doc")
+
+    assert _docfiles(office.load_graph(lib)) == {DOCX_REL, XLSX_REL, "Roadmap.docx"}
+    assert lib.get(f"docs:{DOCX_REL}") is not None        # earlier raw KU survives too
+
+
+def test_reingest_unchanged_office_is_a_noop(tmp_path):
+    """Byte-identical merged graph -> I9 reports the graph KU unchanged, no
+    generation bump (the merge must not churn on a no-op re-ingest)."""
+    lib = Librarian(Store(tmp_path / "mem"))
+    docs = make_docs_dir(tmp_path)
+    office.ingest_office(lib, docs, "dev", "ingest sample office documents")
+    gen = lib.manifest.generation
+    rep, _ = office.ingest_office(lib, docs, "dev",
+                                  "re-ingest identical office documents")
+    assert lib.manifest.generation == gen
+    assert office.GRAPH_ID in rep.unchanged
+
+
+def test_reingesting_an_edited_doc_replaces_its_subgraph(tmp_path):
+    """Editing a document changes its content hash (and thus its node ids); the
+    OLD content-hash subgraph must be pruned, leaving exactly one current
+    subgraph for that path — no stale sections accumulating."""
+    lib = Librarian(Store(tmp_path / "mem"))
+    _docx(tmp_path / "Spec.docx", _para("Overview", style="Heading1"),
+          _para("First."), _para("Legacy section", style="Heading2"),
+          _para("old body"))
+    office.ingest_office(lib, tmp_path / "Spec.docx", "dev", "ingest a spec doc")
+    old_fids = {n["id"].split("/", 1)[1] for n in office.load_graph(lib)["nodes"]
+                if n["type"] == "docfile"}
+
+    _docx(tmp_path / "Spec.docx", _para("Overview", style="Heading1"),
+          _para("Rewritten, shorter."))                  # different bytes -> new fid
+    office.ingest_office(lib, tmp_path / "Spec.docx", "dev",
+                         "re-ingest the edited spec doc")
+
+    g = office.load_graph(lib)
+    docfiles = [n for n in g["nodes"] if n["type"] == "docfile"]
+    assert len(docfiles) == 1 and docfiles[0]["source_path"] == "Spec.docx"
+    new_fid = docfiles[0]["id"].split("/", 1)[1]
+    assert new_fid not in old_fids
+    # no node (and no edge endpoint) still carries the stale content hash
+    assert all(old not in n["id"] for n in g["nodes"] for old in old_fids)

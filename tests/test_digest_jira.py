@@ -115,6 +115,36 @@ def test_reingest_unchanged_is_noop(tmp_path):
     assert rep.unchanged and lib.manifest.generation == gen
 
 
+def test_cross_batch_reference_keeps_the_real_node(tmp_path):
+    """A second dump that references an issue from the FIRST dump parses that
+    issue as an ``external`` stub (it is absent from the standalone re-parse).
+    The merge must keep the earlier REAL node — never downgrade it to the stub —
+    and re-ingesting the second dump unchanged must be a no-op (no oscillation)."""
+    lib = Librarian(Store(tmp_path / "mem"))
+    jira.ingest_jira(lib, make_jira_dump(tmp_path), "dev", "ingest sample Jira dump")
+
+    d2 = tmp_path / "jira-dump-2" / "ACME"
+    d2.mkdir(parents=True)
+    (d2 / "ACME-200.issue.json").write_text(issue_json(
+        "ACME-200", "ACME", "Follow-up on the export bug",
+        issuelinks=[{"type": {"name": "relates"},
+                     "outwardIssue": {"key": "ACME-101"}}]), "utf-8")
+    jira.ingest_jira(lib, tmp_path / "jira-dump-2", "dev",
+                     "ingest a second jira dump referencing ACME-101")
+
+    g = jira.load_graph(lib)
+    a101 = next(n for n in g["nodes"] if n["id"] == "jiraissue/ACME-101")
+    assert not a101.get("external")                       # stayed real, not a stub
+    assert any(n["id"] == "jiraissue/ACME-200" for n in g["nodes"])
+    assert any(e["src"] == "jiraissue/ACME-200" and e["dst"] == "jiraissue/ACME-101"
+               for e in g["edges"])                       # the cross-batch link formed
+
+    gen = lib.manifest.generation                          # re-ingest batch 2 unchanged
+    rep, _ = jira.ingest_jira(lib, tmp_path / "jira-dump-2", "dev",
+                              "re-ingest the second jira dump unchanged")
+    assert lib.manifest.generation == gen and jira.GRAPH_ID in rep.unchanged
+
+
 def test_fts_finds_issue_by_body_word_and_read_body(tmp_path):
     """Jira prose is reached via full-text search (never the entity bridge), and
     ``read_body`` returns the full raw issue detail."""

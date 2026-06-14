@@ -53,6 +53,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from ..schema import KnowledgeUnit
+from . import _graphmerge
 from ._progress import done as _done
 from ._progress import extract_in_chunks as _extract_in_chunks
 from ._progress import tick as _tick
@@ -373,8 +374,12 @@ def ingest_office(lib, docs_dir, author, rationale, progress=None, *,
     if dg is None:
         dg = parse_office(docs_dir, progress=progress, strip_media=strip_media)
     txn = lib.begin(author, rationale)
+    existing = _graphmerge.load_existing(lib, GRAPH_ID, _gb_persistence)
     staged = 0
     for staged, (ku, body) in enumerate(to_kus(dg), 1):
+        if ku.id == GRAPH_ID:              # accumulate, never replace (see _graphmerge)
+            merged = _graphmerge.merge_graphs(existing, _gb_persistence.from_json(body))
+            body = _gb_persistence.to_json(merged)
         txn.ingest_ku(ku, body=body)
         _tick(progress, "office ingest", staged)
     _done(progress, "office ingest", staged)

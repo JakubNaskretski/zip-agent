@@ -41,6 +41,7 @@ import json
 from pathlib import Path
 
 from ..schema import KnowledgeUnit
+from . import _graphmerge
 from ._progress import done as _done
 from ._progress import extract_in_chunks as _extract_in_chunks
 from ._progress import tick as _tick
@@ -325,8 +326,12 @@ def ingest_salesforce(lib, force_app_dir, author, rationale, progress=None, *, d
     if lib.get(TOOL_ID) is None:
         tool_ku, tool_body = _tool_ku()
         txn.add_ku(tool_ku, body=tool_body)
+    existing = _graphmerge.load_existing(lib, GRAPH_ID, _gb_persistence)
     staged = 0
     for staged, (ku, body) in enumerate(dg.kus, 1):
+        if ku.id == GRAPH_ID:              # accumulate, never replace (see _graphmerge)
+            merged = _graphmerge.merge_graphs(existing, _gb_persistence.from_json(body))
+            body = _gb_persistence.to_json(merged)
         txn.ingest_ku(ku, body=body)
         _tick(progress, "sf ingest", staged)
     _done(progress, "sf ingest", staged)

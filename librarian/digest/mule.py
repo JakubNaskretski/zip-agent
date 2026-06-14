@@ -42,6 +42,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from ..schema import KnowledgeUnit
+from . import _graphmerge
 
 # --------------------------------------------------------------------------- #
 # vendored engine import — works both in the dev repo (package under vendor/)
@@ -240,7 +241,11 @@ def ingest_mule(lib, mule_dir, author, rationale):
     ``(Report, MuleDigest)``. Re-ingesting unchanged content is a no-op (I9)."""
     d = parse_mule(mule_dir)
     txn = lib.begin(author, rationale)
+    existing = _graphmerge.load_existing(lib, GRAPH_ID, _gb_persistence)
     for ku, body in to_kus(d):
+        if ku.id == GRAPH_ID:              # accumulate, never replace (see _graphmerge)
+            merged = _graphmerge.merge_graphs(existing, _gb_persistence.from_json(body))
+            body = _gb_persistence.to_json(merged)
         txn.ingest_ku(ku, body=body)
     return txn.commit(), d
 
