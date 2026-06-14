@@ -6,7 +6,12 @@ requires-python = ">=3.11"
 dependencies = []
 
 [project.optional-dependencies]
-dev = ["pytest>=8"]
+# Runtime is stdlib-only (dependencies = []). These are DEV/TEST-only: PyYAML +
+# python-pptx + Pillow let the suite exercise the on-demand pptx-draft skill end to
+# end (the vendored reader.py read/validate verbs need PyYAML; render.py needs
+# python-pptx; Pillow only if a raster asset is spliced). In the deployed sandbox
+# they ship as offline wheels via `build_memory.py --pptx`, never as engine deps.
+dev = ["pytest>=8", "PyYAML>=6", "python-pptx>=1.0", "Pillow>=10"]
 
 [build-system]
 requires = ["setuptools>=68"]
