@@ -132,6 +132,19 @@ def test_parse_extracts_sidecar_text(tmp_path):
     assert "42.5" not in sheet and "MP-A1" not in sheet    # cell VALUES never leave the raw file
 
 
+def test_parse_accepts_a_single_file(tmp_path):
+    """``docs_dir`` may point straight at one document, not only a folder — the
+    agent that hands ``parse_office`` a lone ``.docx``/``.pptx`` must not get a
+    silent empty digest. ``rel`` is taken relative to the file's parent."""
+    doc = _docx(tmp_path / "Acme Integration Spec.docx",
+                _para("Overview", style="Heading1"),
+                _para("Szczegóły konfiguracji MeterPoint__c."))
+    d = office.parse_office(doc)
+    assert [doc_.rel for doc_ in d.documents] == ["Acme Integration Spec.docx"]
+    assert d.errors == [] and d.skipped == []
+    assert "Szczegóły konfiguracji MeterPoint__c." in d.documents[0].text
+
+
 # --------------------------------------------------------------------------- #
 # ingest — the three artifacts
 # --------------------------------------------------------------------------- #
@@ -162,6 +175,20 @@ def test_ingest_creates_kus_sidecar_and_graph(tmp_path):
     edges = {(e["src"], e["type"], e["dst"]) for e in g["edges"]}
     assert (f"docfile/{fid}", "contains", f"docsection/{fid}#1") in edges
     assert (f"docsection/{fid}#2", "child-of", f"docsection/{fid}#1") in edges
+
+
+def test_ingest_accepts_a_single_file(tmp_path):
+    """End-to-end single-file ingest: a lone document yields its raw KU +
+    sidecar keyed by the bare filename (rel = relative to the parent)."""
+    lib = Librarian(Store(tmp_path / "mem"))
+    doc = _docx(tmp_path / "Acme Integration Spec.docx",
+                _para("Overview", style="Heading1"),
+                _para("Szczegóły konfiguracji MeterPoint__c."))
+    rep, d = office.ingest_office(lib, doc, "dev", "ingest a single office doc")
+    assert rep.ok
+    assert [doc_.rel for doc_ in d.documents] == ["Acme Integration Spec.docx"]
+    assert lib.get("docs:Acme Integration Spec.docx") is not None
+    assert lib.get("docs:Acme Integration Spec.docx#text") is not None
 
 
 def test_entities_always_empty(tmp_path):
