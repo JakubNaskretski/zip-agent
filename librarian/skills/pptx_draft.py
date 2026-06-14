@@ -1,33 +1,17 @@
 """pptx-draft — on-demand presentation drafting (vendored pptx-grid-skill).
 
-ON-DEMAND: this module is NOT imported by ``librarian/__init__.py``, so it costs
-zero always-loaded context. The agent reaches it only when a deck is wanted, via
-``from librarian.skills import pptx_draft``. Discoverability is a short pointer in
-the rfp profile overlay; the full agent contract (AGENT_PROMPT.md + SKILL.md)
-ships INSIDE memory.zip and is read on demand — never in the always-loaded prompt.
+A thin subprocess wrapper the agent imports only when a deck is wanted
+(``from librarian.skills import pptx_draft``). It drives the vendored bundle's
+``reader.py`` (theme / recipes / validate — PyYAML only) and ``render.py`` (the
+.pptx — needs python-pptx), each run with ``cwd=<bundle>`` so the bundle's sibling
+imports, default ``theme.yaml`` and ``assets/`` resolve.
 
-What grid is: a **recipe-driven, 12×12-grid** deck composer with a built-in
-five-phase agent flow — Discovery (interview → brief) → Outline → Batch build
-(validate each slide) → Polish (validate-plan) → Render. The agent picks a
-**recipe** by name and fills its content; the recipe places components on the
-grid; ``render.py`` turns the plan into a ``.pptx`` on the calibrated theme.
+NOT imported by ``librarian/__init__.py`` → zero always-loaded context. The agent
+follows the contract in ``pptx/SKILL.md`` (read on demand) and the rfp prompt
+overlay's hook — not this source. The image/placeholder model and the rebrand
+notes live in ``vendor/README.md``.
 
-This module is a thin SUBPROCESS wrapper over the vendored bundle's two scripts:
-``reader.py`` (read-only: theme / recipes / the toolbelt critics / validate-slide
-/ validate-plan — needs only PyYAML) and ``render.py`` (compose the ``.pptx`` —
-needs python-pptx). Both are run with ``cwd=<bundle>`` so their sibling imports
-(``recipes/`` …), the default ``./theme.yaml``, and ``assets/`` resolve; file
-args are passed ABSOLUTE so they resolve regardless of cwd.
-
-Images: the agent never sources images. A decorative image is a labeled grey-box
-:func:`placeholder` the human pastes into; a fill-later image is a speculative
-``asset_id`` that ``render.py`` splices when a matching binary is dropped into the
-bundle's ``assets/`` (raster via Pillow; SVG needs system Cairo — not shipped).
-Default flow ships no assets, so every image renders as a placeholder.
-
-Vendoring pin: see ``_VENDORED_SHA`` below and ``vendor/README.md`` — the single
-sources of truth (prose carries no copy of the SHA; a stale duplicate misleads).
-"""
+Pin: ``_VENDORED_SHA`` + ``vendor/README.md`` (single source of truth)."""
 from __future__ import annotations
 
 import json
@@ -53,10 +37,7 @@ _VENDOR_DIR = _ROOT / "vendor" / "pptx_draft"    # dev only — bundled into ppt
 
 _IGNORE = shutil.ignore_patterns("__pycache__", "*.pyc", "*.pyo")
 
-# the canonical "user fills this in" decorative image value (grid: asset_id=none,
-# a labeled grey box the human pastes over). A fill-later image instead uses a
-# speculative asset_id, e.g. {"asset_id": "poc_login_screen", "fit": "fill"}.
-PLACEHOLDER = {"placeholder": True}
+PLACEHOLDER = {"placeholder": True}   # the decorative-image value; see placeholder()
 
 
 def placeholder(label: str | None = None):
@@ -68,10 +49,8 @@ def placeholder(label: str | None = None):
 
 def assemble_bundle(dest, *, vendor_dir=None) -> Path:
     """Assemble the self-contained grid bundle at *dest* — a verbatim copy of the
-    vendored ``skill/`` tree (reader.py, render.py, recipes/, components/,
-    toolbelt/, schemas/, theme.yaml, SKILL.md, …). reader.py/render.py run with
-    cwd=dest, so everything must live in one directory. Pure stdlib; the single
-    assembly path shared by ``build_memory.py`` (staging ``pptx/``), tests, dev."""
+    vendored ``skill/`` tree. Pure stdlib; the single assembly path shared by
+    ``build_memory.py`` (staging ``pptx/``), tests, and dev."""
     dest = Path(dest)
     src = Path(vendor_dir) if vendor_dir else _VENDOR_DIR
     if not (src / "reader.py").is_file():

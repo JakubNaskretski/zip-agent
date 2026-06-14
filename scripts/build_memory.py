@@ -150,12 +150,9 @@ def build(dest="memory.zip", seed_dir=None, wheelhouse=None, slim=True) -> Path:
     if gb_src.is_dir():
         shutil.copytree(gb_src, staging / "graphbuilder", ignore=_IGNORE)
 
-    # the on-demand pptx-draft skill bundle — the vendored pptx-grid-skill (recipes
-    # + 12x12 grid + reader.py/render.py), shipped verbatim at the ZIP root as
-    # `pptx/`. The skill drives it as a subprocess with cwd=pptx/ so its sibling
-    # imports + default theme.yaml + assets/ resolve. See librarian/skills/pptx_draft.py
-    # and vendor/README.md. Rendering needs python-pptx — bundle it with --pptx (the
-    # read/validate verbs need only the PyYAML in that wheel set).
+    # the on-demand pptx-draft skill bundle — the vendored pptx-grid-skill, shipped
+    # verbatim at the ZIP root as `pptx/` (the wrapper drives it from there). See
+    # librarian/skills/pptx_draft.py and vendor/README.md; render deps ship via --pptx.
     if (REPO / "vendor" / "pptx_draft" / "reader.py").is_file():
         from librarian.skills import pptx_draft as _pptx
         _pptx.assemble_bundle(staging / "pptx")
