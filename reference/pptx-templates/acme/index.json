@@ -1,0 +1,138 @@
+{
+  "version": 5,
+  "themes": [
+    {
+      "id": "Acme",
+      "palette": {
+        "primary": "#1F497D",
+        "accent": "#4F81BD",
+        "text_default": "#000000",
+        "background": "#FFFFFF"
+      },
+      "fonts": {
+        "major": "Calibri",
+        "minor": "Calibri"
+      }
+    }
+  ],
+  "skeletons": [
+    {
+      "id": "Acme_01",
+      "source_deck": "Acme",
+      "categories": [
+        "opening"
+      ],
+      "slot_count": 2,
+      "slot_kinds": [
+        "heading"
+      ],
+      "status": "pending"
+    },
+    {
+      "id": "Acme_02",
+      "source_deck": "Acme",
+      "categories": [
+        "content"
+      ],
+      "slot_count": 2,
+      "slot_kinds": [
+        "bullets",
+        "heading"
+      ],
+      "status": "pending"
+    },
+    {
+      "id": "Acme_03",
+      "source_deck": "Acme",
+      "categories": [
+        "content"
+      ],
+      "slot_count": 2,
+      "slot_kinds": [
+        "heading",
+        "paragraph"
+      ],
+      "status": "pending"
+    },
+    {
+      "id": "Acme_04",
+      "source_deck": "Acme",
+      "categories": [
+        "data"
+      ],
+      "slot_count": 3,
+      "slot_kinds": [
+        "bullets",
+        "heading",
+        "table"
+      ],
+      "status": "pending"
+    },
+    {
+      "id": "Acme_05",
+      "source_deck": "Acme",
+      "categories": [
+        "data",
+        "opening"
+      ],
+      "slot_count": 2,
+      "slot_kinds": [
+        "chart",
+        "heading"
+      ],
+      "status": "pending"
+    },
+    {
+      "id": "Acme_06",
+      "source_deck": "Acme",
+      "categories": [
+        "closing"
+      ],
+      "slot_count": 2,
+      "slot_kinds": [
+        "heading",
+        "paragraph"
+      ],
+      "status": "pending"
+    },
+    {
+      "id": "Acme_07",
+      "source_deck": "Acme",
+      "categories": [
+        "content"
+      ],
+      "slot_count": 3,
+      "slot_kinds": [
+        "bullets",
+        "heading",
+        "image"
+      ],
+      "status": "pending"
+    }
+  ],
+  "tag_vocab": [],
+  "assets": [
+    {
+      "id": "asset_0835aef6",
+      "kind": "table",
+      "tags": [],
+      "description": "",
+      "status": "pending",
+      "width": 0,
+      "height": 0,
+      "aspect": 0.0,
+      "colors_hex": []
+    },
+    {
+      "id": "asset_ebb9f3f5",
+      "kind": "chart",
+      "tags": [],
+      "description": "",
+      "status": "pending",
+      "width": 0,
+      "height": 0,
+      "aspect": 0.0,
+      "colors_hex": []
+    }
+  ]
+}

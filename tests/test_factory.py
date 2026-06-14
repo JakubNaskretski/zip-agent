@@ -101,9 +101,9 @@ def test_extract_kb_index_drop_and_with_indexes(tmp_path):
 
 
 def test_ast_unknown_target_is_rejected():
-    from scripts.build_memory import _download_ast_wheels
+    from scripts.build_memory import _download_wheels, _AST_WHEEL_SPECS
     with pytest.raises(SystemExit):                 # no network needed — fails on validation
-        _download_ast_wheels("totally-bogus-target")
+        _download_wheels(_AST_WHEEL_SPECS, "totally-bogus-target")
 
 
 def test_ast_presets_and_offline_pin():

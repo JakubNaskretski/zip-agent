@@ -1,0 +1,56 @@
+id: Acme_07
+source_deck: Acme
+source_slide_index: 7
+status: pending
+categories:
+- content
+preview: preview.png
+background_image: null
+slots:
+- id: title
+  kind: heading
+  geometry:
+    x: 0.05
+    y: 0.04
+    w: 0.9
+    h: 0.1667
+  style:
+    font_role: major
+  constraints:
+    max_chars: 40
+    max_lines: 1
+    required: true
+  source_excerpt: Solution Overview
+  shape_id: 2
+  role: page_title
+- id: body
+  kind: bullets
+  geometry:
+    x: 0.05
+    y: 0.2333
+    w: 0.43
+    h: 0.62
+  style:
+    font_role: minor
+  constraints:
+    max_items: 4
+    max_chars_per_item: 48
+    required: true
+  source_excerpt: "• Native Salesforce capability / • Configured to the process / • Proven on the POC"
+  shape_id: 3
+  role: key_points
+- id: hero
+  kind: image
+  geometry:
+    x: 0.52
+    y: 0.2333
+    w: 0.43
+    h: 0.62
+  constraints:
+    aspect: 1.33
+    required: true
+    auto_fit: cover
+  source_excerpt: hero image (screenshot / diagram) — pasted by the user
+  shape_id: 4
+  role: hero_image
+unmapped_shapes: []

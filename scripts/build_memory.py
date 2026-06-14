@@ -51,6 +51,15 @@ _AST_WHEEL_SPECS = (
     "tree-sitter-language-pack==0.13.0",
     "pypdf>=4,<7",
 )
+# python-pptx (+ PyYAML) wheels for the on-demand pptx-draft skill's compose
+# step. python-pptx pulls lxml / Pillow / XlsxWriter as deps; PyYAML is what
+# the vendored reader.py's read verbs import. --pptx downloads these for the
+# SANDBOX platform (same machinery as --ast); they install at boot like the AST
+# wheels. See librarian/skills/pptx_draft.py.
+_PPTX_WHEEL_SPECS = (
+    "python-pptx>=1.0,<2",
+    "PyYAML>=6,<7",
+)
 # friendly target presets -> (pip --platform tag, --python-version). The wheels
 # must match the SANDBOX, not the build machine — that is the whole point of the
 # presets. Default is the common Azure-style linux x86_64 / py3.12 sandbox.
@@ -125,7 +134,8 @@ def _slim_language_pack(src, dest, keep="apex"):
     return src.stat().st_size / 1048576, dest.stat().st_size / 1048576
 
 
-def build(dest="memory.zip", seed_dir=None, wheelhouse=None, slim=True) -> Path:
+def build(dest="memory.zip", seed_dir=None, wheelhouse=None, slim=True,
+          pptx_template=None) -> Path:
     staging = Path(tempfile.mkdtemp()) / "mem"
     staging.mkdir(parents=True)
 
@@ -139,6 +149,25 @@ def build(dest="memory.zip", seed_dir=None, wheelhouse=None, slim=True) -> Path:
     gb_src = REPO / "vendor" / "graphbuilder"
     if gb_src.is_dir():
         shutil.copytree(gb_src, staging / "graphbuilder", ignore=_IGNORE)
+
+    # the on-demand pptx-draft skill bundle — the vendored pptx-skill v5 consumer
+    # (reader.py + SKILL.md) assembled beside a template's data, shipped at the
+    # ZIP root as `pptx/` so the skill can drive it as a subprocess (reader.py
+    # finds its bundle from its own location). See librarian/skills/pptx_draft.py
+    # and vendor/README.md. Rendering also needs python-pptx — bundle it with
+    # --pptx (the read verbs need only the PyYAML in that wheel set).
+    if (REPO / "vendor" / "pptx_draft" / "reader.py").is_file():
+        from librarian.skills import pptx_draft as _pptx
+        tmpl = pptx_template or _pptx.DEFAULT_TEMPLATE
+        if (_pptx.templates_root() / tmpl).is_dir():
+            _pptx.assemble_bundle(staging / "pptx", template=tmpl)
+            print(f"pptx-draft skill: bundled template {tmpl!r} at pptx/")
+        else:
+            avail = ", ".join(_pptx.list_templates()) or "(none)"
+            print(f"pptx-draft skill: not bundled (template {tmpl!r} not under "
+                  f"reference/pptx-templates/; available: {avail})")
+    else:
+        print("pptx-draft skill: not bundled (vendor/pptx_draft missing)")
 
     # NOTE: MASTER_PROMPT.md is intentionally NOT included — it is pasted into the
     # agent builder's instructions field and lives outside the ZIP.
@@ -241,7 +270,8 @@ def assemble_prompt(profile) -> str:
     return out
 
 
-def build_profile(profile, out_dir=None, wheelhouse=None, slim=True):
+def build_profile(profile, out_dir=None, wheelhouse=None, slim=True,
+                  pptx_template=None):
     """Build one agent variant: a CLEAN memory.zip (engine + optional seed, no
     ingested data) plus the assembled MASTER_PROMPT.md BESIDE it (never inside
     the ZIP). Returns (out_dir, memzip_path, prompt_path)."""
@@ -254,35 +284,35 @@ def build_profile(profile, out_dir=None, wheelhouse=None, slim=True):
     seed = PROFILES_DIR / profile / "seed"
     seed_dir = str(seed) if seed.is_dir() and any(seed.iterdir()) else None
     memzip = build(out_dir / "memory.zip", seed_dir=seed_dir,
-                   wheelhouse=wheelhouse, slim=slim)
+                   wheelhouse=wheelhouse, slim=slim, pptx_template=pptx_template)
     prompt_path = out_dir / "MASTER_PROMPT.md"
     prompt_path.write_text(assemble_prompt(profile), "utf-8")
     return out_dir, memzip, prompt_path
 
 
-def _download_ast_wheels(target=None) -> Path:
-    """Download the tree-sitter AST + pypdf wheels for the SANDBOX platform into a
-    fresh temp dir and return it (to pass as the wheelhouse). This is what ``--ast``
-    runs: it hides the platform tags, the version pins, and the always-use-a-clean-
-    dir rule. Needs network AT BUILD TIME (the deployed sandbox stays offline)."""
+def _download_wheels(specs, target=None, label="wheels") -> Path:
+    """Download *specs* wheels for the SANDBOX platform into a fresh temp dir and
+    return it (to pass as the wheelhouse). This is what ``--ast`` / ``--pptx`` run:
+    they hide the platform tags, the version pins, and the always-use-a-clean-dir
+    rule. Needs network AT BUILD TIME (the deployed sandbox stays offline)."""
     target = target or _AST_DEFAULT_TARGET
     if target not in _AST_TARGETS:
         raise SystemExit(
-            f"--ast target {target!r} not known. Choices: "
+            f"wheel target {target!r} not known. Choices: "
             f"{', '.join(sorted(_AST_TARGETS))}. "
-            "(If you meant an output path, put it before --ast or use "
+            "(If you meant an output path, put it before --ast/--pptx or use "
             "--out-dir/--profile; or use --wheelhouse DIR with your own wheels.)")
     plat, pyver = _AST_TARGETS[target]
-    wh = Path(tempfile.mkdtemp(prefix="ast_wheels_"))   # fresh dir: no append trap
+    wh = Path(tempfile.mkdtemp(prefix="wheels_"))   # fresh dir: no append trap
     cmd = [sys.executable, "-m", "pip", "download", "--only-binary", ":all:",
            "--platform", plat, "--python-version", pyver, "-d", str(wh),
-           *_AST_WHEEL_SPECS]
-    print(f"--ast {target}: downloading AST wheels for {plat} / py{pyver} …")
+           *specs]
+    print(f"{label} ({target}): downloading wheels for {plat} / py{pyver} …")
     res = subprocess.run(cmd, capture_output=True, text=True)
     if res.returncode != 0:
         shutil.rmtree(wh, ignore_errors=True)
         raise SystemExit(
-            f"--ast {target}: pip could not fetch the AST wheels for this platform.\n"
+            f"{label} ({target}): pip could not fetch the wheels for this platform.\n"
             f"  {' '.join(cmd)}\n\n{res.stderr.strip()}\n\n"
             "Check the target matches your sandbox, or download the wheels yourself "
             "and use --wheelhouse (see README §1.B).")
@@ -312,6 +342,16 @@ if __name__ == "__main__":
                          "the right wheels for the SANDBOX — the easy alternative to "
                          f"--wheelhouse. Optional target (default {_AST_DEFAULT_TARGET}); "
                          f"choices: {', '.join(sorted(_AST_TARGETS))}.")
+    ap.add_argument("--pptx", action="store_true",
+                    help="bundle python-pptx (+PyYAML) wheels so the on-demand pptx-draft "
+                         "skill can render decks in the sandbox; downloaded for the SANDBOX "
+                         "platform. Combine with --ast to bundle both; uses the --ast TARGET "
+                         "if one is given.")
+    ap.add_argument("--pptx-template", default=None, metavar="NAME",
+                    help="which deck template to ship for the pptx-draft skill "
+                         "(a folder under reference/pptx-templates/; default: the 'acme' "
+                         "starter). Swap in your own by dropping a folder there — see "
+                         "reference/pptx-templates/README.md.")
     args = ap.parse_args()
 
     if args.list_profiles:
@@ -319,28 +359,35 @@ if __name__ == "__main__":
             print(name)
         raise SystemExit(0)
 
-    if args.ast and args.wheelhouse:
-        raise SystemExit("--ast and --wheelhouse are mutually exclusive — --ast IS the "
-                         "wheelhouse (it downloads it for you).")
-    wheelhouse, _ast_tmp = args.wheelhouse, None
-    if args.ast:
-        _ast_tmp = _download_ast_wheels(args.ast)
-        wheelhouse = str(_ast_tmp)
+    if (args.ast or args.pptx) and args.wheelhouse:
+        raise SystemExit("--ast/--pptx download the wheelhouse for you — don't combine "
+                         "them with --wheelhouse.")
+    wheelhouse, _wh_tmp = args.wheelhouse, None
+    specs = list(_AST_WHEEL_SPECS) if args.ast else []
+    if args.pptx:
+        specs += list(_PPTX_WHEEL_SPECS)
+    if specs:
+        target = args.ast if isinstance(args.ast, str) else _AST_DEFAULT_TARGET
+        label = "+".join(n for n, on in (("--ast", args.ast), ("--pptx", args.pptx)) if on)
+        _wh_tmp = _download_wheels(specs, target, label)
+        wheelhouse = str(_wh_tmp)
 
     try:
         if args.profile:
             out_dir, memzip, prompt_path = build_profile(
-                args.profile, args.out_dir, wheelhouse, slim=not args.no_slim)
+                args.profile, args.out_dir, wheelhouse, slim=not args.no_slim,
+                pptx_template=args.pptx_template)
             print(f"built profile '{args.profile}':")
             print(f"  memory.zip     {memzip}")
             print(f"  MASTER_PROMPT  {prompt_path}")
             print("deploy: paste MASTER_PROMPT.md into the agent builder's instructions "
                   "field, then upload memory.zip. The prompt is NOT inside the ZIP.")
         else:
-            out = build(args.out, args.seed, wheelhouse, slim=not args.no_slim)
+            out = build(args.out, args.seed, wheelhouse, slim=not args.no_slim,
+                        pptx_template=args.pptx_template)
             print(f"built {out}")
             print("reminder: paste MASTER_PROMPT.md into the agent builder's instructions "
                   "field — it is NOT inside the ZIP.")
     finally:
-        if _ast_tmp:
-            shutil.rmtree(_ast_tmp, ignore_errors=True)
+        if _wh_tmp:
+            shutil.rmtree(_wh_tmp, ignore_errors=True)

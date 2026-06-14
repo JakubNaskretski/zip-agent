@@ -1,0 +1,41 @@
+id: Acme_05
+source_deck: Acme
+source_slide_index: 5
+status: pending
+categories:
+- data
+- opening
+preview: preview.png
+background_image: null
+slots:
+- id: title
+  kind: heading
+  geometry:
+    x: 0.05
+    y: 0.04
+    w: 0.9
+    h: 0.1667
+  style:
+    font_role: major
+  constraints:
+    max_chars: 25
+    max_lines: 1
+    required: true
+  source_excerpt: Projected Revenue
+  shape_id: 2
+  role: page_title
+- id: data_chart
+  kind: chart
+  geometry:
+    x: 0.1
+    y: 0.24
+    w: 0.8
+    h: 0.64
+  constraints:
+    chart_type: column_clustered
+    max_series: 1
+    max_categories: 4
+    required: true
+  source_excerpt: column_clustered chart, 1 series × 4 cats
+  shape_id: 3
+unmapped_shapes: []

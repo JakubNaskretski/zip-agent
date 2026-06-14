@@ -1,0 +1,270 @@
+# pptx-skill — v5 agent contract
+
+You are composing PowerPoint decks from a library of **structural
+skeletons** (slide layouts with typed slots + constraints) and
+**themes** (master + palette + fonts). You pick skeletons by
+*function and fit*, fill their slots with your content, and the
+consumer builds the deck on the chosen host theme.
+
+## The flow
+
+1. **List what's available**
+   ```bash
+   python reader.py list-themes
+   python reader.py list-skeletons [--category data] [--has-slot table]
+   ```
+
+2. **Find skeletons that fit your content**
+   ```bash
+   python reader.py match-skeletons \
+     --content '{"title": "Q4 results beat", "bullets": ["Revenue +12%", "Margin up"]}' \
+     --category data
+   ```
+   Returns ranked candidates with `fit_score`, `slot_mapping`, and
+   `headroom`. Higher `fit_score` = tighter fit (the layout was
+   designed for that content length — loose fit wastes the layout).
+
+3. **If zero matches: rephrase, don't pick a near-miss**
+   When `match-skeletons` returns `matches: []`, each `issues[]` entry
+   includes a concrete `suggested_action` ("rephrase to ≤60 chars
+   (drop 13)"). Your job is to **shorten the content**, not to pick
+   a skeleton whose constraints don't match. Re-call `match-skeletons`
+   after rephrasing.
+
+   `issues[]` may also carry `missing_required` entries
+   (`{skeleton_id, missing_required: [{slot_id, kind}], suggested_action}`):
+   that skeleton fit your content but demands content for more slots
+   (e.g. a required chart). Either add content for those slot kinds
+   and re-match, or filter to a different category/skeleton.
+
+   **Escape hatch.** If rephrasing would lose meaning (text is
+   already terse), wrap the value in the plan as
+   `{"value": "...", "overflow": "shrink"}`. The build engine will
+   auto-shrink the font and emit a warning to a sidecar file for
+   the user to review manually. Use sparingly.
+
+4. **Pre-flight check the full plan**
+   ```bash
+   python reader.py validate-plan plan.json
+   ```
+   Returns `{ok, errors, warnings}`. Hard errors block the build.
+   `overflow:shrink` violations land as warnings, not errors.
+
+   Every `asset_<id>` in the plan is resolved against the asset
+   library — an unknown id is a hard error (`unknown_asset`); take
+   ids from `find-asset`, never invent them. An existing asset whose
+   aspect mismatches the slot is a warning. The placeholder forms
+   (`"placeholder"` / `{"placeholder": true, ...}`) validate clean.
+
+5. **Hand off (or build, if you have the binaries)**
+
+   In the typical authoring brief flow your job ends here: emit the
+   validated `plan.json` and stop. The user runs compose-v5 in the
+   local app where the asset binaries live.
+
+   If you're working from a full `skill-v5.zip` (binaries present —
+   see "What's in the bundle" below), you can also build the deck
+   yourself:
+   ```bash
+   python reader.py compose-v5 plan.json out.pptx --theme <theme_id>
+   ```
+   Picks one host theme per output deck. All slides inherit the
+   theme's master (brand bars, page numbers, footer), palette, and
+   fonts. The skeletons are theme-free; identity comes from the host.
+
+   compose-v5 re-runs the validator first: hard errors abort the
+   build (errors as JSON, exit 1) unless you pass `--force`, which
+   carries them into the warnings sidecar instead. Validation
+   warnings and build-time `overflow:shrink` events always land in
+   `<out>.pptx.warnings.json` for the user to review.
+
+## Slot kinds
+
+| Kind | Content shape | Constraints |
+|---|---|---|
+| `heading` | string | `max_chars`, `max_lines`, `required` |
+| `paragraph` | string | `max_chars`, `max_lines`, `required` |
+| `bullets` | list of strings | `max_items`, `max_chars_per_item`, `required` |
+| `image` | `"asset_<id>"`, `{"asset": "asset_<id>"}`, or `"placeholder"` / `{"placeholder": true, "label": "..."}` for a labeled grey box | `aspect`, `required`, `auto_fit` |
+| `table` | `{"rows": N, "cols": N, "has_header": bool, "data": [[...]]}` | `max_rows`, `max_cols`, `has_header` |
+| `chart` | `{"type": "bar\|column\|line\|pie\|doughnut\|area" (+ `_stacked` / `_markers` variants), "categories": ["..."], "series": [{"name": "...", "values": [...]}]}` | `chart_type`, `max_series`, `max_categories` |
+| `footer` | string | `max_chars`, `max_lines`, `auto_from_host` |
+
+Each slot also carries `geometry` (fractional `x/y/w/h`) and a
+`style` block with theme-relative tokens (`font_role: major|minor|
+explicit`, `color_role: primary|accent|text_default|background`)
+that get resolved against the chosen host theme at build time.
+
+## Plan shape
+
+```json
+[
+  {
+    "skeleton_id": "deckA_03",
+    "slots": {
+      "title": "Q4 results beat consensus",
+      "body": ["Revenue +12%", "Margin expanded 200bps", "FCF positive"],
+      "hero": "asset_a1b2c3d4"
+    }
+  },
+  {
+    "skeleton_id": "deckA_07",
+    "slots": {
+      "title": {"value": "A slightly longer title", "overflow": "shrink"},
+      "data_table": {
+        "rows": 3, "cols": 2, "has_header": true,
+        "data": [["Quarter", "Revenue"], ["Q3", "$1.2M"], ["Q4", "$1.8M"]]
+      }
+    }
+  }
+]
+```
+
+## Engine-side helpers
+
+Don't compute character counts, aspect ratios, or EMU coordinates
+yourself — call these instead:
+
+```bash
+python reader.py measure-text "Q4 results" --against deckA_03.title
+python reader.py check-asset-fit asset_a1b2 deckA_03 hero
+python reader.py find-asset --kind photo --tags people --tags office
+```
+
+`measure-text` returns `{chars, words, lines_est}` and, with
+`--against`, the headroom for a specific slot. `check-asset-fit`
+returns whether the asset fits a target image slot (aspect, kind,
+resolution) plus a `suggestion` if not. `find-asset` returns a
+deterministic shortlist — see "Picking images" below.
+
+## Picking images
+
+For every image slot, **call `find-asset` first** — do not scan
+`index.json` and pick by `description` text. The shortlist is filtered
+purely on `kind` (required) and `tags` (optional, AND-matched against
+a closed workspace vocabulary), so two runs with the same query
+produce the same candidates in the same order.
+
+The valid tag list ships in `index.json` under `tag_vocab` (and is
+echoed on every `find-asset` response). Don't invent tags — anything
+outside that list cannot match.
+
+```bash
+python reader.py find-asset \
+  --kind photo \
+  --tags people --tags office \
+  --limit 5
+```
+
+Each match carries `description` (the one-line summary), `tags`,
+mechanical dimensions (`width`, `height`, `aspect`), and `colors_hex`.
+Use `description` to pick the final 1-of-N by topic fit; use the
+dimensions if you want to pre-filter the shortlist for aspect-friendly
+candidates (or just defer to `check-asset-fit`).
+
+Algorithm:
+
+1. Call `find-asset` with the slot's required `kind` plus 1–3
+   `--tags` that name what should be in the picture (people, office,
+   chart, etc. — read `tag_vocab` for the live list).
+2. If `matches: []`, retry without `--tags` (one broadening step).
+   If still empty, jump to step 4.
+3. From the surviving shortlist, pick by `description` fit to the
+   slide topic. Optionally run `check-asset-fit` against the slot to
+   filter out aspect-incompatible candidates.
+4. If nothing fits and the slot is **not** required, omit it — the
+   build skips the slot.
+5. If the slot IS required and nothing fits, use a **placeholder**
+   — the canonical fallback. Pass `"placeholder"` (the literal
+   string) as the asset value. The build draws a dashed grey box
+   labeled `image needed: <slot_id>` and emits a warning in the
+   sidecar so the user knows to swap it in by hand. Pass
+   `{"placeholder": true, "label": "Customer logo here"}` for a
+   custom hint label. Both forms pass validate-plan.
+   (Only if your setup has network access to the authoring host —
+   most on-prem runs do not — you may instead stage a new image via
+   `POST /api/asset/add` and use the returned `asset_id` in the
+   plan.)
+
+Don't pick assets by reading `index.json` directly past `find-asset`'s
+shortlist. The deterministic selector is the only place that's
+guaranteed idempotent.
+
+## Categories
+
+Skeletons carry one or more functional categories — use these to
+filter `list-skeletons` / `match-skeletons`:
+
+`opening` (title / agenda) · `section_divider` (between sections) ·
+`content` (general body) · `comparison` (2-column side-by-side) ·
+`data` (table or chart heavy) · `metric` (single large stat) ·
+`quote` (pull-quote, testimonial) · `closing` (Q&A, thank you,
+next steps).
+
+A skeleton can have multiple categories (a "Thank you" closing
+slide that's also opening-shaped is `[opening, closing]`).
+
+## What the agent does NOT do
+
+- Re-render slides yourself; `compose-v5` owns slide construction.
+- Pick a near-miss skeleton instead of rephrasing.
+- Mix multiple host themes in one output deck (one `--theme` per
+  build).
+- Re-style master decorations (brand bars, page numbers) — those
+  ride along with the chosen host theme.
+
+## What's in the bundle
+
+Two delivery modes — same SKILL.md, different file inventory:
+
+**A) Authoring brief bundle** (the one most users ship). Text-only.
+Typical size: ~100 KB. Built by the local /compose web app. Flat
+layout — one YAML per item, no per-item dirs (no binaries means
+no need to group multiple files per item).
+
+```
+SKILL.md                        you are reading this
+reader.py                       used for read-only queries (find-asset,
+                                check-asset-fit, match-skeletons,
+                                validate-plan, list-themes, list-skeletons)
+requirements.txt                PyYAML only — the read-only commands need
+                                nothing else (python-pptx is required only
+                                by compose-v5, which you don't run here)
+tag_vocab.yaml                  closed tag list for assets
+index.json                      summaries of every theme/skeleton/asset
+brand.md                        (optional) per-org style constraints
+brief.md                        the user's request
+themes/<id>.yaml                palette + fonts
+skeletons/<id>.yaml             slots, geometry, style, constraints, categories
+assets/<id>.yaml                asset descriptions (kind, tags, description,
+                                width, height, aspect, colors_hex)
+user_assets/<id>.<ext>          (optional) low-res previews of images the
+                                user attached to THIS request
+user_assets/manifest.json       (optional) original dimensions + filenames
+```
+
+In this mode your job ends at producing the plan — the user runs
+compose-v5 locally where the full-res asset binaries live. **Do
+NOT try to run compose-v5 yourself; the binaries aren't present.**
+
+**B) Static skill-v5.zip** (built via `cli build-v5`). Self-contained.
+
+```
+... everything from (A), plus:
+themes/<id>/master.pptx         host master for compose-v5
+themes/<id>/preview.png         optional
+skeletons/<id>/preview.png      optional source-slide thumbnail
+skeletons/<id>/background.png   optional frozen underlay
+assets/<id>.<ext>               actual raster / SVG / XML binaries
+```
+
+In this mode you can additionally run:
+```bash
+python reader.py compose-v5 plan.json out.pptx --theme <theme_id>
+```
+
+How to tell which mode you're in: check whether `assets/<id>.<ext>`
+binaries exist (a quick `ls assets/` shows `.yaml` files always; the
+sibling binaries are present only in mode B).
+
+No network. No state. No vision required at compose time.

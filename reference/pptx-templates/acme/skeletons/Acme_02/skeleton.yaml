@@ -1,0 +1,42 @@
+id: Acme_02
+source_deck: Acme
+source_slide_index: 2
+status: pending
+categories:
+- content
+preview: preview.png
+background_image: null
+slots:
+- id: title
+  kind: heading
+  geometry:
+    x: 0.05
+    y: 0.04
+    w: 0.9
+    h: 0.1667
+  style:
+    font_role: major
+  constraints:
+    max_chars: 20
+    max_lines: 1
+    required: true
+  source_excerpt: Agenda
+  shape_id: 2
+  role: page_title
+- id: body
+  kind: bullets
+  geometry:
+    x: 0.05
+    y: 0.2333
+    w: 0.9
+    h: 0.66
+  style:
+    font_role: minor
+  constraints:
+    max_items: 5
+    max_chars_per_item: 34
+    required: true
+  source_excerpt: • Introductions and goals / • Proposed approach / • Engagement timeline
+  shape_id: 3
+  role: detailed_list
+unmapped_shapes: []

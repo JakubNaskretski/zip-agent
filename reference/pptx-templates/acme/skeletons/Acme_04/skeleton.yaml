@@ -1,0 +1,56 @@
+id: Acme_04
+source_deck: Acme
+source_slide_index: 4
+status: pending
+categories:
+- data
+preview: preview.png
+background_image: null
+slots:
+- id: title
+  kind: heading
+  geometry:
+    x: 0.05
+    y: 0.04
+    w: 0.9
+    h: 0.1667
+  style:
+    font_role: major
+  constraints:
+    max_chars: 30
+    max_lines: 1
+    required: true
+  source_excerpt: Phased Delivery Plan
+  shape_id: 2
+  role: page_title
+- id: body
+  kind: bullets
+  geometry:
+    x: 0.05
+    y: 0.2333
+    w: 0.9
+    h: 0.66
+  style:
+    font_role: minor
+  constraints:
+    max_items: 3
+    max_chars_per_item: 43
+    required: true
+  source_excerpt: • Discovery sets the foundation / • Build in two-week sprints / • Validate with…
+  shape_id: 3
+  role: key_points
+- id: data_table
+  kind: table
+  geometry:
+    x: 0.07
+    y: 0.5867
+    w: 0.85
+    h: 0.2667
+  constraints:
+    max_rows: 4
+    max_cols: 3
+    has_header: true
+    required: true
+  source_excerpt: 4×3 table (header row)
+  shape_id: 4
+unmapped_shapes: []

@@ -119,15 +119,30 @@ def _install_wheelhouse(work_dir) -> dict:
     if not wheels:
         return {"installed": False, "reason": "wheelhouse empty"}
     # Re-boot guard: pip over the wheelhouse costs real time on slow sandbox
-    # CPUs (the grammar wheel alone is ~20 MB), and hosts re-run boot
-    # mid-session. If the AST stack already imports, the wheels are in — skip
-    # pip entirely. A broken half-install falls through to the normal flow.
-    try:
-        importlib.import_module("tree_sitter")
-        importlib.import_module("tree_sitter_language_pack")
-        return {"installed": True, "skipped": "already importable"}
-    except Exception:
-        pass
+    # CPUs (the grammar wheel alone is ~20 MB, and the pptx render stack adds
+    # lxml/Pillow), and hosts re-run boot mid-session. If everything the
+    # wheelhouse provides already imports, the wheels are in — skip pip
+    # entirely. The probe set is DERIVED from the bundled wheels, so an --ast,
+    # --pptx, or combined build each skip correctly. An unrecognised wheel (no
+    # mapping) or a broken half-install falls through to the self-healing pip
+    # flow below.
+    _IMPORT_NAME = {
+        "tree-sitter": "tree_sitter",
+        "tree-sitter-language-pack": "tree_sitter_language_pack",
+        "pypdf": "pypdf",
+        "python-pptx": "pptx", "pyyaml": "yaml", "lxml": "lxml",
+        "pillow": "PIL", "xlsxwriter": "xlsxwriter",
+        "typing-extensions": "typing_extensions",
+    }
+    dists = sorted({Path(w).name.split("-")[0].replace("_", "-").lower() for w in wheels})
+    probe = [_IMPORT_NAME.get(d) for d in dists]
+    if probe and all(probe):           # every bundled wheel maps to a known import
+        try:
+            for mod in probe:
+                importlib.import_module(mod)
+            return {"installed": True, "skipped": "already importable"}
+        except Exception:
+            pass
     # --upgrade matters: sandboxes often PREINSTALL an older tree-sitter, and
     # without it pip leaves the old (property-style-API) binding in place — the
     # engine's probe then correctly refuses it and Apex stays on regex. Retry

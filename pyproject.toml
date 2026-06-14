@@ -6,7 +6,12 @@ requires-python = ">=3.11"
 dependencies = []
 
 [project.optional-dependencies]
-dev = ["pytest>=8"]
+# Runtime is stdlib-only (dependencies = []). These are DEV/TEST-only: PyYAML and
+# python-pptx let the test suite exercise the on-demand pptx-draft skill end to
+# end (the vendored reader.py read verbs need PyYAML; compose-v5 needs
+# python-pptx). In the deployed sandbox they ship as offline wheels via
+# `build_memory.py --pptx`, never as a runtime dependency of the engine.
+dev = ["pytest>=8", "PyYAML>=6", "python-pptx>=1.0"]
 
 [build-system]
 requires = ["setuptools>=68"]

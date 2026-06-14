@@ -1,0 +1,42 @@
+id: Acme_01
+source_deck: Acme
+source_slide_index: 1
+status: pending
+categories:
+- opening
+preview: preview.png
+background_image: null
+slots:
+- id: title
+  kind: heading
+  geometry:
+    x: 0.075
+    y: 0.3106
+    w: 0.85
+    h: 0.2144
+  style:
+    font_role: major
+  constraints:
+    max_chars: 48
+    max_lines: 1
+    required: true
+  source_excerpt: Acme Corp - Partnership Proposal
+  shape_id: 2
+  role: page_title
+- id: subtitle
+  kind: heading
+  geometry:
+    x: 0.15
+    y: 0.5667
+    w: 0.7
+    h: 0.2556
+  style:
+    font_role: major
+  constraints:
+    max_chars: 31
+    max_lines: 1
+    required: true
+  source_excerpt: Prepared for <Client>
+  shape_id: 3
+  role: subtitle
+unmapped_shapes: []
