@@ -77,6 +77,22 @@ is exactly what the target picks (`--help` lists them). The build prints
 `Apex backend in this zip: AST (7 wheels bundled)`; a wrong target degrades
 harmlessly to the regex backend at boot (same as variant A).
 
+**Deck drafting (`--pptx`, the `rfp` profile).** The `rfp` agent can draft
+PowerPoint decks via the on-demand `pptx-draft` skill (vendored pptx-grid-skill).
+The skill bundle (`pptx/`) ships automatically — but *rendering* a deck in the
+sandbox needs `python-pptx`, so add `--pptx` to bundle those offline wheels
+(combine it with `--ast`):
+
+```bash
+python3 scripts/build_memory.py --profile rfp --ast --pptx
+```
+
+Without `--pptx` the agent can still browse layouts and build/validate a plan,
+but it can't render the `.pptx`. The skill, its image-placeholder model, and how
+to rebrand the deck template (`theme.yaml`) live in
+[`vendor/README.md`](vendor/README.md) (the `pptx_draft/` section). Nothing about
+the agent's knowledge base changes to enable decks — the skill is engine-side.
+
 **Advanced / custom platform** — download the wheels yourself and pass
 `--wheelhouse DIR` instead. The `0.13.0` language-pack pin is REQUIRED: it is the
 last release that bundles all grammars in the wheel — pack 1.x downloads them from
