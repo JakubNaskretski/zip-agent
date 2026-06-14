@@ -78,10 +78,12 @@ and at runtime in the built-in KU `agent:tool/pptx-draft`.
 two brand-named example decks (`examples/example_branded.json`,
 `examples/example_showcase.json`) are dropped, and one real company name in a
 `recipes/__init__.py` docstring example (the `team_grid_2x2` bio) was scrubbed to a
-fictional one (`Ex-fintech`), per the anonymization HARD RULES. `requirements.txt` is trimmed to `python-pptx + PyYAML +
-Pillow` — `jsonschema` is removed (declared upstream but imported nowhere;
-validation is hand-rolled) and `cairosvg` is removed (needs system libcairo,
-unshippable offline).
+fictional one (`Ex-fintech`), per the anonymization HARD RULES. `requirements.txt`
+keeps `python-pptx + PyYAML + Pillow + cairosvg` but drops `jsonschema` (declared
+upstream but imported nowhere; validation is hand-rolled). `cairosvg` (the SVG
+renderer) is NOT in the offline `--pptx` wheelhouse — it needs the system Cairo
+library (libcairo), which a pip wheel can't supply; where SVG assets are used the
+agent runs `pip install cairosvg` at runtime on a Cairo-capable host (it has network).
 
 Runtime deps are **not** vendored: read/validate verbs need PyYAML and `render.py`
 needs python-pptx (+ lxml / XlsxWriter); Pillow lets `render` splice raster assets.
@@ -90,9 +92,11 @@ Bundle them offline for the sandbox with `scripts/build_memory.py --pptx`.
 ### Images, icons, and rebranding
 
 The default flow ships **no image assets** — every picture is a labeled grey-box
-placeholder the human pastes in. To supply icons/images, drop binaries (raster, or
-SVG pre-rasterized to PNG — system Cairo is not shipped) into the bundle's
-`assets/`; `render.py` then splices them. To **rebrand**, this is a
+placeholder the human pastes in. To supply icons/images, drop binaries + a sidecar
+`.yaml` (same stem) into the bundle's `assets/` and reference the `asset_id` in the
+plan; `render.py` then splices them — raster (png/jpg) via Pillow, SVG via
+`cairosvg` (install it first: `pip install cairosvg`; it is not in the offline
+wheelhouse — needs system Cairo). To **rebrand**, this is a
 recalibrate-the-file model (no per-deck ingest): edit `theme.yaml` (palette by name
 + fonts + type scale), set the org name in `render.py`'s ORG settings, and supply a
 per-org `templates/opening-slide.pptx` — none of which should be committed to this

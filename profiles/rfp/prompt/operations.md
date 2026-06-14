@@ -72,6 +72,6 @@ ppt.render("plan.json", "draft.pptx", lib=lib)  # composes the .pptx in the sand
 
 **Draft, don't finish + keep the source labels.** Ground every slide in the findings/POC; carry CLIENT REQUIRES / OUR MATERIAL SAYS / OUR POC SHOWS onto the slides; never present SALESFORCE (general) / MY SUGGESTION as fact. Unconfirmed figures stay `"<TBC: …>"`.
 
-**Images are placeholders the human adds.** You never source images: each picture, logo, or screenshot is a `ppt.placeholder("describe what to paste")` — a labeled grey box the user fills. (If the team dropped icons/images into the bundle's `assets/`, render splices them; otherwise placeholders.)
+**Images: placeholders by default, or a supplied asset.** You never source images — each picture, logo, or screenshot is a `ppt.placeholder("describe what to paste")` grey box the user fills, UNLESS a matching asset sits in the bundle's `assets/` (binary + sidecar `.yaml`): then reference its `asset_id` and `render` splices it. Raster (png/jpg) works as-is; for an **SVG** asset, first `pip install cairosvg` (its renderer — not in the offline bundle, needs system Cairo; you have network), then render.
 
 **Hand it back.** After render, give the `.pptx` path + a short finish-this note: which grey boxes to fill (with their labels) and any `<TBC:>` items, so nothing unfinished ships.
