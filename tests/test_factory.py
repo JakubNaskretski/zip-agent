@@ -72,9 +72,18 @@ def test_upgrade_profile_carries_kb_and_regenerates_prompt(tmp_path):
 
     out_dir, memzip, prompt_path, changed = upgrade_profile("rfp", out / "memory.zip", out_dir=out)
 
-    # KB carried onto the rebuilt engine
+    # the upgrade ships a REBUILT search index (not left for first boot): the
+    # initial deploy never ran rebuild_indexes, so an index in the upgraded zip
+    # can only have come from the upgrade itself
+    with zipfile.ZipFile(memzip) as zf:
+        assert any(n.startswith("kb/indexes/") for n in zf.namelist()), \
+            "upgrade must ship a rebuilt search index, not a stripped one"
+    # KB carried onto the rebuilt engine, and the shipped index is live
     s2 = boot(memzip, work_dir=tmp_path / "w2")
     assert s2.get("jira:PROJ-99") is not None
+    from librarian import retrieve
+    con = retrieve.open_index(s2.librarian)
+    assert "jira:PROJ-99" in {h["ku_id"] for h in retrieve.find_entity(con, "MeterPointService")}
     # the original KB zip is preserved as the backup (never clobbered)
     assert (out / "memory.prev.zip").exists()
     s_prev = boot(out / "memory.prev.zip", work_dir=tmp_path / "wp")

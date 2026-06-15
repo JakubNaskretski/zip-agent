@@ -315,7 +315,10 @@ def upgrade_profile(profile, old_zip, out_dir=None, wheelhouse=None, slim=True):
     the input: an existing
     ``memory.zip`` at the target is moved to ``memory.prev.zip`` first, so an
     in-place upgrade (``old_zip == <out_dir>/memory.zip``) keeps the original as
-    the backup. Returns ``(out_dir, memzip, prompt_path, prompt_changed)``."""
+    the backup. The search index (which ``upgrade_memory`` drops as rebuildable)
+    is rebuilt here in-process, so the result ships READY — no first-boot rebuild
+    and no shrunk-zip surprise. Returns
+    ``(out_dir, memzip, prompt_path, prompt_changed)``."""
     import importlib.util
 
     available = list_profiles()
@@ -362,6 +365,16 @@ def upgrade_profile(profile, old_zip, out_dir=None, wheelhouse=None, slim=True):
                 old_input = backup
         merged = Path(tmp) / "merged.zip"
         upgrade_memory.upgrade(str(old_input), str(fresh), str(merged))
+        # rebuild the search index NOW (upgrade_memory drops it as rebuildable) so
+        # the shipped zip is READY — no first-boot rebuild step, no size surprise.
+        # Indexing is pure-python + stdlib sqlite, so boot WITHOUT installing the
+        # wheelhouse (its wheels target the SANDBOX platform, not this build host).
+        from librarian import boot as _boot, rebuild_indexes as _rebuild_indexes
+        session = _boot(merged, work_dir=Path(tmp) / "boot",
+                        install_wheelhouse=False, autosave=False)
+        _rebuild_indexes(session.librarian, "upgrade",
+                         "rebuild search index after engine upgrade")
+        session.checkpoint()                       # pack the fresh index into the zip
         shutil.move(str(merged), str(out_zip))
 
     prompt_path = out_dir / "MASTER_PROMPT.md"
@@ -467,10 +480,10 @@ if __name__ == "__main__":
             print(f"  memory.zip     {memzip}   (your KB carried onto the current engine)")
             print(f"  MASTER_PROMPT  {prompt_path}   "
                   f"({'CHANGED — re-paste it' if changed else 'unchanged'})")
-            print("next: upload memory.zip as the agent's memory, then on first boot run "
-                  "rebuild_indexes(lib, you, 'rebuild after upgrade').")
+            print("ready to deploy: upload memory.zip as the agent's memory "
+                  "(its search index is already rebuilt — no first-boot step).")
             if changed:
-                print("      AND re-paste MASTER_PROMPT.md into the instructions field.")
+                print("      then re-paste MASTER_PROMPT.md into the instructions field.")
         elif args.profile:
             out_dir, memzip, prompt_path = build_profile(
                 args.profile, args.out_dir, wheelhouse, slim=not args.no_slim)
