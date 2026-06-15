@@ -41,7 +41,7 @@ lib = session.librarian
 print(session.wheelhouse)   # offline-install report — include it in the boot report
 ```
 
-**Boot ONCE per session. Never re-boot to recover from confusion — re-boot ONLY after the user says a new `memory.zip` was uploaded. Run `checkpoint`/`export` as the ONLY statement in its execution call.**
+**Boot ONCE at session start. But if the KERNEL RESETS** — a cell raises `NameError` on `session`/`lib`/`con`, or the process restarted with empty globals — **the in-memory variables died while the on-disk `memory.zip` + work dir survived: RE-RUN the boot snippet to reconnect** (it's a cheap no-op when already booted), then continue from committed state. Do **not** re-boot merely to shake off a logic error or confusion; otherwise re-boot only after the user uploads a new `memory.zip`. Run `checkpoint`/`export` as the ONLY statement in its execution call.
 
 (If your host exposes a working directory other than `/mnt/data`, adjust the paths.) `session` auto-checkpoints: after any commit that changes memory, it re-packs the working dir back into `memory.zip` atomically. You do **not** ask the user to download or re-upload anything — the host keeps the ZIP. (To hand them an updated copy on request, `session.export(path)` to a NEW versioned file — `memory_v2.zip`, `_v3`, … — never overwriting the live `memory.zip`, then give them that filename.)
 
@@ -162,7 +162,19 @@ print(session.stats())   # KU counts by source/tier/kind/status + generation
 session.export("/mnt/data/memory_v2.zip")   # next free version: _v2, _v3, … — NOT the live memory.zip
 ```
 
-**Recovery rule:** if any call dies, NEVER restart the whole task. Open a fresh execution, run `session.stats()` to see durable committed state, then resume at the step that died. Re-ingesting committed content is a no-op (I9).
+**Recovery rule:** if any call dies, NEVER restart the whole task. In a fresh execution **first re-run the boot snippet** — the kernel may have died and taken `session`/`lib`/`con` with it; the on-disk state survived, so re-booting reconnects them (cheap no-op if the kernel is alive). Then `session.stats()` to see durable committed state and resume at the step that died. Re-ingesting committed content is a no-op (I9).
+
+**Resumable work — drive multi-step tasks off a durable plan.** For anything more than a couple of steps (a big digest, an RFP pass, a walk-through of materials), keep your worklist ON DISK as a plan KU and loop off it, so a kernel death loses at most the one in-flight item:
+```python
+from librarian import plan
+plan.create_plan(lib, run, items, author, rationale)    # idempotent; <run> names this task
+for item in plan.pending(lib, run):                      # the work still left to do
+    # ensure booted: re-run the boot snippet (cheap when alive, reconnects if the kernel died)
+    ...do one item...
+    plan.mark(lib, run, item, "done", author, f"completed {item}")   # committed = durable on disk
+# killed mid-loop? just re-run the loop — pending() skips items already marked done, so it resumes.
+```
+The plan KU (`curated:plan/<run>`) is also the human-readable record of where the work stands: `plan.progress(lib, run)` for a count, or read it directly any time. Commit per item (or per small batch) — that frequency is exactly what makes the work survive a kernel reset.
 
 **Stdout budget:** keep total printed output per execution well under ~10k characters. Print compact one-line summaries; never loop-print per item. Trust Report's capped repr (5 examples per change kind, then "… and N more"). Progress fires every 1000 files/KUs — do not re-print the same counts.
 
@@ -288,7 +300,7 @@ Data Center, Bearer PAT):
 
 ```
 BOOT      unzip (only if workdir lacks librarian/) → sys.path → boot() → session.librarian
-          — ONCE per session; re-boot only after the user uploads a NEW memory.zip
+          — ONCE per session; RE-BOOT to recover a dead kernel (NameError on session/lib/con) or after a NEW memory.zip
 ASK       step-0: imprecise name / abbreviation / Polish vocab → retrieve.resolve_name(con, "text") → confirm winner
           then: classify → entity bridge / graph / FTS → expand minimally → cite KU ids + confidence (§4.1)
           multi-hop: sf.walk(g, node_id, depth=2) · body peek: retrieve.excerpt(lib, ku_id, "term")
@@ -306,7 +318,10 @@ GROW      lib.begin(author, why).add_ku(KnowledgeUnit(id="curated:…", kind="cu
           tier="curated", source="agent", path="kb/curated/…", links=[derived-from…]), body=…).commit()
 REORG     plan → preview (before/after) → confirm → commit
 LONG OPS  five-call protocol (§4 "Long operations"): 1-PARSE+PREVIEW 2-INGEST 3-(no rebuild) 4-VERIFY 5-EXPORT
-          · each step one execution · progress=print · dead call: stats() then resume · never restart
+          · each step one execution · progress=print · dead call: RE-BOOT → stats() → resume · never restart
+RESUMABLE multi-step work: from librarian import plan → plan.create_plan(lib, run, items, …) (idempotent);
+          loop `for item in plan.pending(lib, run):` ensure-booted → do item → plan.mark(lib, run, item, "done", …)
+          committed per item → kernel death loses ≤1 item; re-run resumes (done items skipped). plan.progress(lib, run)
 SAFETY    sources are READ-ONLY; never hand-edit KB/manifest/index; rationale = a real sentence
 PERSIST   commits auto-checkpoint into memory.zip (host retains it). EXPORT on request = regenerate a NEW versioned file (memory_v2.zip, _v3…), NEVER overwrite the live zip
 {{PROFILE_CHEATSHEET}}
