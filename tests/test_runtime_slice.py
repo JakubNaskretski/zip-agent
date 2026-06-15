@@ -13,11 +13,11 @@ Reuses the synthetic force-app from the digest test, so no org export is needed.
 """
 import json
 
-from runtime import boot, layout, navigate
+from runtime import Session, boot, layout, navigate
 from runtime.ingest import digest_to_tree
 from runtime.storage import Workspace
 
-from tests.test_digest_graphbuilder import make_force_app
+from tests.test_digest_graphbuilder import make_force_app, OBJECT_META
 
 
 def _force_app(tmp_path):
@@ -141,3 +141,33 @@ def test_export_is_the_only_pack(tmp_path):
     # a new versioned zip is produced only on explicit export
     v2 = ws.export(str(tmp_path / "memory_v2.zip"))
     assert v2.exists() and v2 != v1
+
+
+# --------------------------------------------------------------------------- #
+# the Session caches a parsed shard + its adjacency, and re-parses only when an
+# ingest rewrites it — so repeat access is free without going stale
+# --------------------------------------------------------------------------- #
+def test_session_shard_cache_and_invalidation(tmp_path):
+    make_force_app(tmp_path)
+    ws = Workspace(None, str(tmp_path / "work"))
+    digest_to_tree(ws, "salesforce", str(tmp_path / "force-app"))
+    s = Session(ws, {}, {})
+
+    g1 = s.shard("salesforce")
+    assert s.shard("salesforce") is g1            # cached: same object, no re-parse
+    idx = s.index("salesforce")
+    assert s.index("salesforce") is idx           # adjacency built once
+
+    # walk via the cached index matches an index-free walk (parity)
+    plain = navigate.walk(g1, "object/MeterPoint__c", depth=2, direction="both")
+    viaidx = navigate.walk(g1, "object/MeterPoint__c", depth=2, direction="both", idx=idx)
+    assert {n["id"] for n in plain["nodes"]} == {n["id"] for n in viaidx["nodes"]}
+
+    # an ingest that adds a node rewrites the shard → cache invalidates → new data shows
+    extra = tmp_path / "force-app" / "main" / "default" / "objects" / "Extra__c"
+    extra.mkdir(parents=True)
+    (extra / "Extra__c.object-meta.xml").write_text(OBJECT_META.format(label="Extra"), "utf-8")
+    digest_to_tree(ws, "salesforce", str(tmp_path / "force-app"))
+    g2 = s.shard("salesforce")
+    assert g2 is not g1                            # re-parsed after the shard changed
+    assert any(n["id"] == "object/Extra__c" for n in g2["nodes"])

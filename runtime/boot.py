@@ -30,6 +30,7 @@ class Session:
         self.ws = ws
         self.manifest = manifest
         self.context = context        # {path: text} — the only thing pulled into memory on boot
+        self._cache: dict = {}        # source -> (sig, graph, idx) — parse a shard once per session
 
     # -- the routing layer the host should print into the conversation ---------
     @property
@@ -49,14 +50,48 @@ class Session:
     def l1(self, source: str) -> str:
         return navigate.load_l1(self.ws, source)
 
+    def _shard_sig(self, source: str):
+        # the overlay shard's mtime — changes when an ingest rewrites it, so the
+        # cache invalidates; a base-only (zip) shard is immutable during a session.
+        try:
+            return (self.ws.work / layout.graph_shard(source)).stat().st_mtime_ns
+        except OSError:
+            return "base"
+
     def shard(self, source: str) -> dict:
-        return navigate.load_shard(self.ws, source)
+        """The source's graph shard, parsed once per session (re-parsed only if an
+        ingest rewrote it). Reuse instead of `navigate.load_shard` for repeat access."""
+        sig = self._shard_sig(source)
+        cached = self._cache.get(source)
+        if cached and cached[0] == sig:
+            return cached[1]
+        g = navigate.load_shard(self.ws, source)
+        self._cache[source] = (sig, g, None)      # adjacency built lazily on first walk
+        return g
+
+    def index(self, source: str) -> dict:
+        """The cached adjacency index for a source's shard (built once)."""
+        self.shard(source)
+        sig, g, idx = self._cache[source]
+        if idx is None:
+            idx = navigate.build_index(g)
+            self._cache[source] = (sig, g, idx)
+        return idx
 
     def find(self, source: str, text: str, **kw) -> list:
         return navigate.find_nodes(self.shard(source), text, **kw)
 
-    def navigate(self, source: str, query: str, **kw) -> dict:
-        return navigate.navigate(self.ws, source, query, **kw)
+    def navigate(self, source: str, query: str, *, depth: int = 1, limit: int = 40,
+                 max_hits: int = 5) -> dict:
+        """Resolve `query` in a source and return each hit with its neighborhood —
+        reusing the cached shard + adjacency, so repeated calls don't re-parse."""
+        g, idx = self.shard(source), self.index(source)
+        matches = navigate.find_nodes(g, query)
+        hits = [{"node": n,
+                 "neighborhood": navigate.walk(g, n["id"], depth=depth, limit=limit,
+                                                direction="both", idx=idx)}
+                for n in matches[:max_hits]]
+        return {"source": source, "query": query, "match_count": len(matches), "hits": hits}
 
     # -- the one place a whole zip is written ----------------------------------
     def export(self, out_zip: str) -> str:

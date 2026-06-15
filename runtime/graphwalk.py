@@ -70,8 +70,26 @@ def neighbors(graph: dict, node_id: str, direction: str = "out",
     return out
 
 
+def build_index(graph: dict) -> dict:
+    """Precompute the adjacency + node metadata a walk needs, ONCE.
+
+    Returns ``{"out": {src: [dst,...]}, "in": {dst: [src,...]}, "meta": {id: (type,label)}}``.
+    Building this is O(V+E); pass it to :func:`walk` (``idx=``) to avoid rebuilding
+    per call when you traverse a shard repeatedly in a session (the Session caches
+    one per source). Covers the unfiltered case — an ``edge_type``-filtered walk
+    rebuilds its own adjacency (rare)."""
+    adj_out: dict = {}
+    adj_in: dict = {}
+    for e in graph.get("edges", []):
+        adj_out.setdefault(e.get("src"), []).append(e.get("dst"))
+        adj_in.setdefault(e.get("dst"), []).append(e.get("src"))
+    meta = {n.get("id"): (n.get("type"), n.get("label")) for n in graph.get("nodes", [])}
+    return {"out": adj_out, "in": adj_in, "meta": meta}
+
+
 def walk(graph: dict, node_id: str, depth: int = 2, limit: int = 200,
-         direction: str = "out", edge_type: Optional[str] = None) -> dict:
+         direction: str = "out", edge_type: Optional[str] = None,
+         idx: Optional[dict] = None) -> dict:
     """Bounded, cycle-safe BFS from ``node_id`` — the multi-hop primitive.
 
     Returns ``{"nodes": [{"id", "type", "label", "depth"}, ...], "truncated": N}``.
@@ -80,16 +98,21 @@ def walk(graph: dict, node_id: str, depth: int = 2, limit: int = 200,
     ``truncated`` but not returned. Each entry carries ``type`` + ``label`` looked
     up once, so the caller can triage without further reads. Never hand-roll BFS
     over a graph — the depth/limit caps here are what keep the sandbox alive.
-    """
-    adj_out: dict = {}
-    adj_in: dict = {}
-    for e in graph.get("edges", []):
-        if edge_type and e.get("type") != edge_type:
-            continue
-        adj_out.setdefault(e.get("src"), []).append(e.get("dst"))
-        adj_in.setdefault(e.get("dst"), []).append(e.get("src"))
 
-    meta = {n.get("id"): (n.get("type"), n.get("label")) for n in graph.get("nodes", [])}
+    Pass ``idx`` (from :func:`build_index`) to reuse a prebuilt adjacency across
+    many walks on the same shard; without it, adjacency is built locally (so a
+    one-off walk needs no setup). ``idx`` is ignored when ``edge_type`` is set.
+    """
+    if idx is not None and edge_type is None:
+        adj_out, adj_in, meta = idx["out"], idx["in"], idx["meta"]
+    else:
+        adj_out, adj_in = {}, {}
+        for e in graph.get("edges", []):
+            if edge_type and e.get("type") != edge_type:
+                continue
+            adj_out.setdefault(e.get("src"), []).append(e.get("dst"))
+            adj_in.setdefault(e.get("dst"), []).append(e.get("src"))
+        meta = {n.get("id"): (n.get("type"), n.get("label")) for n in graph.get("nodes", [])}
 
     visited = {node_id}
     queue = [(node_id, 0)]

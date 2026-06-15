@@ -32,6 +32,7 @@ node = graphwalk.node
 find_nodes = graphwalk.find_nodes
 neighbors = graphwalk.neighbors
 walk = graphwalk.walk
+build_index = graphwalk.build_index
 dependents = graphwalk.dependents
 dependencies = graphwalk.dependencies
 type_counts = graphwalk.type_counts
