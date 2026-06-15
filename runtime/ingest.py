@@ -25,7 +25,24 @@ transactional Knowledge-Unit body.
 """
 from __future__ import annotations
 
+import sys
+
 from . import index_gen, layout, navigate
+
+
+def ensure_engine(ws) -> None:
+    """Materialise the heavy parsing engine onto disk + sys.path (idempotent).
+
+    Navigation never needs ``graphbuilder``/``librarian.digest`` — only ingest
+    does — so they are not extracted on boot. This pulls just those two packages
+    out of the zip the first time data is ingested. A no-op in the dev repo (the
+    packages are already importable) and when already extracted."""
+    for pkg in ("graphbuilder", "librarian"):
+        if not (ws.work / pkg).is_dir() and ws.exists(pkg + "/__init__.py"):
+            ws.extract_tree(pkg + "/")
+    root = str(ws.work)
+    if root not in sys.path:
+        sys.path.insert(0, root)
 
 # KU kinds that are NOT written as plain files here: the aggregate graph (we write
 # the merged shard ourselves, from dg.graph) and the provenance tool record.
@@ -90,6 +107,8 @@ def digest_to_tree(ws, source: str, src_dir, *, progress=None) -> dict:
         raise ValueError(
             f"no ingest adapter for source {source!r}; "
             f"available: {', '.join(sorted(_ADAPTERS))}")
+
+    ensure_engine(ws)        # extract graphbuilder/ + librarian/ on first ingest
 
     # the adapter import is what puts the vendored engine on sys.path in the dev
     # repo (its own ImportError fallback), so import persistence only afterwards.
