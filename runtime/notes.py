@@ -52,12 +52,16 @@ def write_note(ws, rel: str, body: str, *, title=None, derived_from=()) -> str:
 
 
 def read_note(ws, rel: str) -> dict:
-    """Return ``{"frontmatter": {...}, "body": "..."}`` for a stored note."""
+    """Return ``{"frontmatter": {...}, "body": "..."}`` for a stored note.
+
+    Tolerant of a hand-written note that opens a fence but never closes it, or
+    whose frontmatter isn't JSON — those yield ``{}`` frontmatter and the whole
+    text as body, never an exception (``review_needed`` scans every note)."""
     text = ws.read_text(_rel(rel))
-    if text.startswith(_FENCE):
-        _, fm, body = text.split(_FENCE, 2)
+    parts = text.split(_FENCE, 2)
+    if text.startswith(_FENCE) and len(parts) == 3:
         try:
-            return {"frontmatter": json.loads(fm), "body": body.lstrip("\n")}
+            return {"frontmatter": json.loads(parts[1]), "body": parts[2].lstrip("\n")}
         except json.JSONDecodeError:
             pass
     return {"frontmatter": {}, "body": text}
@@ -76,7 +80,10 @@ def review_needed(ws, prefix: str = "") -> list:
     proactively; a note built on a source that moved on may be out of date."""
     out = []
     for note_path in list_notes(ws, prefix):
-        fm = read_note(ws, note_path)["frontmatter"]
+        try:
+            fm = read_note(ws, note_path)["frontmatter"]
+        except Exception:
+            continue                       # one unreadable note never stalls the scan
         stored = fm.get("source_hashes") or {}
         changed, missing = [], []
         for src, old in stored.items():

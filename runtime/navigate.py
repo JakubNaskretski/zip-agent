@@ -21,6 +21,7 @@ cheap, always-available path. Parsing/ingest is the heavy, on-demand path
 from __future__ import annotations
 
 import json
+import re
 from typing import Optional
 
 from . import graphwalk, layout
@@ -75,17 +76,16 @@ def excerpt(text: str, term: str, window: int = 400, max_hits: int = 3) -> list:
     the file. Case-insensitive; returns ``[]`` when the term is absent."""
     if not text or not term:
         return []
-    hay = text.casefold()
-    needle = term.casefold()
-    out, start = [], 0
-    while len(out) < max_hits:
-        i = hay.find(needle, start)
-        if i < 0:
+    out = []
+    # match on the ORIGINAL text (case-insensitively) so the index aligns with the
+    # slice — casefold() is not length-preserving (ß→ss, ligatures), so finding in a
+    # casefolded copy and slicing the original drifts the window off the match.
+    for m in re.finditer(re.escape(term), text, re.IGNORECASE):
+        if len(out) >= max_hits:
             break
-        a = max(0, i - window // 2)
-        b = min(len(text), i + len(term) + window // 2)
+        a = max(0, m.start() - window // 2)
+        b = min(len(text), m.end() + window // 2)
         out.append(("…" if a > 0 else "") + text[a:b] + ("…" if b < len(text) else ""))
-        start = b
     return out
 
 

@@ -3,7 +3,7 @@
 All read/write through a Workspace (no held engine, single-file writes). Reuses
 the office fixture for a real .docx (heading "Overview") and .xlsx (sheet "Dane").
 """
-from runtime import docs, layout, notes, plan, search
+from runtime import docs, layout, navigate, notes, plan, search
 from runtime.ingest import digest_to_tree
 from runtime.storage import Workspace
 
@@ -80,3 +80,19 @@ def test_plan_create_pending_mark_idempotent(tmp_path):
     prog = plan.progress(ws, "acme-rfp")
     assert prog["done"] == 1 and prog["total"] == 4
     assert "req-001" not in prog["pending"] and "req-004" in prog["pending"]
+
+
+# -- excerpt aligns the window with the match (casefold isn't length-preserving) -- #
+def test_excerpt_survives_casefold_length_change():
+    text = "ß" * 300 + " TARGETWORD sits well past the casefold drift."
+    windows = navigate.excerpt(text, "TARGETWORD")
+    assert windows and "TARGETWORD" in windows[0]
+
+
+# -- a malformed/hand-written note never crashes read_note or the staleness scan -- #
+def test_notes_tolerate_malformed_frontmatter(tmp_path):
+    ws = Workspace(None, str(tmp_path / "work"))
+    ws.write_text("kb/curated/rfp/run/raw.md", "---\nnot json, no closing fence\nbody text")
+    note = notes.read_note(ws, "rfp/run/raw")
+    assert note["frontmatter"] == {} and "body text" in note["body"]
+    assert notes.review_needed(ws) == []          # the scan must not raise

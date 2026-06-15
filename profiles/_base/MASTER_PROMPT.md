@@ -129,7 +129,7 @@ g = navigate.load_shard(ws, "salesforce")         # the shard → a Python varia
 |----------------|------|
 | Resolve an imprecise / partial name to nodes | `navigate.find_nodes(g, "text", types=…)` → matching node dicts (no fuzzy guess) |
 | One-call neighborhood for a name | `session.navigate("salesforce", "Account")` → hits + bounded neighborhoods |
-| Fields / structure of an object | `navigate.neighbors(g, "object/Obj", "in", "field_of")` → field node ids |
+| Fields / structure of an object | `navigate.neighbors(g, "object/Obj", "in", "field_of")` → `(edge_type, field-node-id)` pairs |
 | What fires on / calls / depends on a node | `navigate.dependents(g, "object/Obj")` · `navigate.neighbors(g, node_id, "in"\|"out", edge_type)` |
 | Multi-hop neighborhood (bounded, cycle-safe) | `navigate.walk(g, "apexclass/Foo", depth=2, direction="both")` → `{"nodes":[{id,type,label,depth}…], "truncated":N}` |
 | The verbatim file behind a node | `navigate.read_source(ws, "salesforce", node)` → text (then `navigate.excerpt(text, "term")`) |

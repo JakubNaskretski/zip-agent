@@ -36,12 +36,13 @@ def _tokens(text: str) -> list:
 
 
 def _snippet(text: str, terms, window: int = 200) -> str:
-    low = text.casefold()
+    # match on the original text (case-insensitively) so the slice aligns with the
+    # match — casefold() is not length-preserving (see runtime.navigate.excerpt).
     for t in terms:
-        i = low.find(t)
-        if i >= 0:
-            a = max(0, i - window // 2)
-            b = min(len(text), i + len(t) + window // 2)
+        m = re.search(re.escape(t), text, re.IGNORECASE)
+        if m:
+            a = max(0, m.start() - window // 2)
+            b = min(len(text), m.end() + window // 2)
             return ("…" if a > 0 else "") + text[a:b].replace("\n", " ") + ("…" if b < len(text) else "")
     return text[:window].replace("\n", " ")
 
