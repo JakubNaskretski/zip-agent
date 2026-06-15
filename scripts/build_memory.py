@@ -33,6 +33,7 @@ import json
 
 from librarian.store import pack_zip
 from runtime import index_gen, layout as _layout
+from runtime.storage import Workspace
 
 REPO = Path(__file__).resolve().parent.parent
 _IGNORE = shutil.ignore_patterns("__pycache__", "*.pyc", "*.pyo", "*.tmp")
@@ -401,6 +402,81 @@ def upgrade_profile(profile, old_zip, out_dir=None, wheelhouse=None, slim=True):
     return out_dir, out_zip, prompt_path, prompt_changed
 
 
+def _carry_kb(old_zip, ws) -> dict:
+    """Copy a Librarian-model zip's KNOWLEDGE into a lean Workspace overlay.
+
+    The actual knowledge is layout-compatible: raw source files already live at
+    ``kb/raw/<source>/…`` (identical in both models) and each per-source structure
+    graph is the same JSON, only relocated from ``kb/structured/<source>/graph.json``
+    to the lean ``graph/<source>.json`` shard. Curated notes carry verbatim. The
+    old manifest / changelog / dev-state / search index are NOT carried — the lean
+    runtime regenerates the indexes from the shards. No re-parsing: the old zip
+    already holds the parsed graphs."""
+    counts = {"raw": 0, "curated": 0, "graphs": 0, "skipped": 0}
+    with zipfile.ZipFile(old_zip) as z:
+        for n in z.namelist():
+            if n.endswith("/"):
+                continue
+            if n.startswith("kb/raw/"):
+                ws.write_bytes(n, z.read(n)); counts["raw"] += 1
+            elif n.startswith("kb/curated/"):
+                ws.write_bytes(n, z.read(n)); counts["curated"] += 1
+            elif n.startswith("kb/structured/") and n.endswith("/graph.json"):
+                parts = n.split("/")                  # kb structured <source> graph.json
+                if len(parts) == 4 and parts[2] in _layout.SOURCES:
+                    ws.write_bytes(_layout.graph_shard(parts[2]), z.read(n))
+                    counts["graphs"] += 1
+                else:
+                    counts["skipped"] += 1
+    return counts
+
+
+def migrate_to_lean(old_zip, profile, out_dir=None, wheelhouse=None, slim=True):
+    """Carry a deployed Librarian-model zip's KB onto the lightweight runtime.
+
+    Builds a fresh lean code zip for ``profile``, overlays the OLD zip's knowledge
+    (raw files + curated notes verbatim, each ``kb/structured/<src>/graph.json``
+    relocated to ``graph/<src>.json``), regenerates the L0/L1 indexes from the
+    shards, and writes ``<out_dir>/memory.zip`` + the regenerated ``MASTER_PROMPT.md``
+    beside it. The old zip's bundled wheelhouse is carried forward automatically.
+    Never re-parses (the graphs are already built) and never clobbers the input
+    (an existing target is backed up to ``memory.prev.zip``). Returns
+    ``(out_dir, memzip, prompt_path, counts)``."""
+    available = list_profiles()
+    if profile not in available:
+        raise SystemExit(f"unknown profile {profile!r}; available: "
+                         f"{', '.join(available) or '(none)'}")
+    old_zip = Path(old_zip)
+    if not old_zip.is_file():
+        raise SystemExit(f"--migrate: OLD zip not found: {old_zip}")
+    out_dir = Path(out_dir) if out_dir else (REPO / "dist" / profile)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    out_zip = out_dir / "memory.zip"
+    seed = PROFILES_DIR / profile / "seed"
+    seed_dir = str(seed) if seed.is_dir() and any(seed.iterdir()) else None
+
+    with tempfile.TemporaryDirectory(prefix="migrate_") as tmp:
+        if wheelhouse is None:                        # preserve offline capability
+            carried = _extract_wheelhouse(old_zip, Path(tmp) / "wh")
+            if carried:
+                wheelhouse, slim = str(carried), False
+                print(f"migrate: carrying forward {len(list(carried.glob('*.whl')))} "
+                      "bundled wheel(s) from the old zip")
+        code = build(Path(tmp) / "code.zip", seed_dir=seed_dir,
+                     wheelhouse=wheelhouse, slim=slim)
+        # the lean code zip is the read-only base; the carried KB is the overlay
+        ws = Workspace(str(code), str(Path(tmp) / "work"))
+        counts = _carry_kb(old_zip, ws)
+        index_gen.regenerate(ws)                      # rebuild L0/L1 from the shards
+        if out_zip.exists():                          # never clobber: back up first
+            shutil.move(str(out_zip), str(out_dir / "memory.prev.zip"))
+        ws.export(str(out_zip))
+
+    prompt_path = out_dir / "MASTER_PROMPT.md"
+    prompt_path.write_text(assemble_prompt(profile), "utf-8")
+    return out_dir, out_zip, prompt_path, counts
+
+
 def _download_wheels(specs, target=None, label="wheels") -> Path:
     """Download *specs* wheels for the SANDBOX platform into a fresh temp dir and
     return it (to pass as the wheelhouse). This is what ``--ast`` / ``--pptx`` run:
@@ -448,6 +524,12 @@ if __name__ == "__main__":
                          "bundled wheelhouse forward automatically (pptx/AST/PDF stays "
                          "bundled — no need to re-pass --pptx/--ast); backs up any "
                          "existing memory.zip as memory.prev.zip — never overwrites the input.")
+    ap.add_argument("--migrate", default=None, metavar="OLD_ZIP",
+                    help="carry a deployed Librarian-model zip's KB onto the lightweight "
+                         "runtime (requires --profile). No re-parse — relocates the existing "
+                         "raw files + graph shards + curated notes and regenerates the L0/L1 "
+                         "indexes. Writes <out-dir>/memory.zip + regenerated MASTER_PROMPT.md; "
+                         "backs up any existing memory.zip as memory.prev.zip.")
     ap.add_argument("--seed", default=None, help="directory of initial KB content to include")
     ap.add_argument("--no-slim", action="store_true",
                     help="bundle the language-pack wheel with ALL grammars "
@@ -500,6 +582,19 @@ if __name__ == "__main__":
                   "(its search index is already rebuilt — no first-boot step).")
             if changed:
                 print("      then re-paste MASTER_PROMPT.md into the instructions field.")
+        elif args.migrate:
+            if not args.profile:
+                raise SystemExit("--migrate requires --profile <name> (the prompt is "
+                                 "profile-specific). See --list-profiles.")
+            out_dir, memzip, prompt_path, counts = migrate_to_lean(
+                args.migrate, args.profile, args.out_dir, wheelhouse, slim=not args.no_slim)
+            print(f"migrated profile '{args.profile}' onto the lightweight runtime:")
+            print(f"  carried: {counts['raw']} raw files, {counts['curated']} curated "
+                  f"notes, {counts['graphs']} graph shard(s) (no re-parse)")
+            print(f"  memory.zip     {memzip}   (your KB on the lean runtime)")
+            print(f"  MASTER_PROMPT  {prompt_path}")
+            print("deploy: upload memory.zip, then paste MASTER_PROMPT.md into the "
+                  "instructions field.")
         elif args.profile:
             out_dir, memzip, prompt_path = build_profile(
                 args.profile, args.out_dir, wheelhouse, slim=not args.no_slim)
