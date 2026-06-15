@@ -5,7 +5,8 @@ import zipfile
 import pytest
 
 from librarian import boot
-from scripts.build_memory import list_profiles, assemble_prompt, build_profile, build
+from scripts.build_memory import (
+    list_profiles, assemble_prompt, build_profile, build, upgrade_profile)
 from scripts.extract_kb import extract
 from factories import jira_ku
 
@@ -53,6 +54,42 @@ def test_build_profile_emits_clean_zip_and_prompt_beside_it(tmp_path):
     session = boot(memzip, work_dir=tmp_path / "deployed")
     session.begin("dev", "first ingest on the rfp agent").add_ku(jira_ku(1), body="x").commit()
     assert session.get("jira:PROJ-1") is not None
+
+
+def test_upgrade_profile_carries_kb_and_regenerates_prompt(tmp_path):
+    """One-shot upgrade of a deployed, KB-loaded zip: new engine + carried KB +
+    regenerated prompt, in place, without losing the original. Exercises the
+    hardest path — the KB zip IS <out_dir>/memory.zip."""
+    out = tmp_path / "rfp"
+    build_profile("rfp", out_dir=out)                      # initial deploy (clean)
+    # operator ingests knowledge straight into the deployed zip
+    s = boot(out / "memory.zip", work_dir=tmp_path / "w")
+    s.begin("dev", "ingest a project issue into the deployed agent").add_ku(
+        jira_ku(99), body="acme order export bug").commit()
+    assert s.get("jira:PROJ-99") is not None
+    # an older prompt sits beside it; pretend it's stale so we can see the regen
+    (out / "MASTER_PROMPT.md").write_text("STALE PROMPT", "utf-8")
+
+    out_dir, memzip, prompt_path, changed = upgrade_profile("rfp", out / "memory.zip", out_dir=out)
+
+    # KB carried onto the rebuilt engine
+    s2 = boot(memzip, work_dir=tmp_path / "w2")
+    assert s2.get("jira:PROJ-99") is not None
+    # the original KB zip is preserved as the backup (never clobbered)
+    assert (out / "memory.prev.zip").exists()
+    s_prev = boot(out / "memory.prev.zip", work_dir=tmp_path / "wp")
+    assert s_prev.get("jira:PROJ-99") is not None
+    # prompt regenerated to the real contract, drift reported
+    assert changed is True
+    text = prompt_path.read_text("utf-8")
+    assert text != "STALE PROMPT" and "## 4.2 DISCOVER" in text
+
+
+def test_upgrade_profile_requires_a_known_profile(tmp_path):
+    memzip = tmp_path / "memory.zip"
+    boot(memzip, work_dir=tmp_path / "w")
+    with pytest.raises(SystemExit):
+        upgrade_profile("does-not-exist", memzip, out_dir=tmp_path / "o")
 
 
 def test_extract_kb_roundtrips_and_never_touches_input(tmp_path):

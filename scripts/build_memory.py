@@ -9,6 +9,10 @@ is pasted into the agent builder's instructions field, so it is a *separate*
 deliverable that lives outside the ZIP.
 
     python scripts/build_memory.py [out.zip] [--seed DIR] [--wheelhouse DIR]
+    python scripts/build_memory.py --profile rfp                 # clean variant + its prompt
+    python scripts/build_memory.py --profile rfp --upgrade dist/rfp/memory.zip   # one-shot:
+        # rebuild engine + carry the OLD zip's KB + regenerate MASTER_PROMPT, in place
+        # (backs up the old zip as memory.prev.zip; never overwrites the input).
 """
 from __future__ import annotations
 
@@ -280,6 +284,61 @@ def build_profile(profile, out_dir=None, wheelhouse=None, slim=True):
     return out_dir, memzip, prompt_path
 
 
+def upgrade_profile(profile, old_zip, out_dir=None, wheelhouse=None, slim=True):
+    """Upgrade a DEPLOYED, KB-loaded zip to the current engine AND regenerate the
+    profile's MASTER_PROMPT in one step — the move ``build_profile`` (clean zip,
+    no KB) and ``upgrade_memory`` (zip merge, no prompt) don't compose into.
+
+    Builds a fresh clean code zip for ``profile`` (engine + seed), merges the OLD
+    zip's knowledge into it (the ``upgrade_memory`` logic, imported — not
+    duplicated), and writes ``<out_dir>/memory.zip`` (your KB on the new engine) +
+    ``MASTER_PROMPT.md`` beside it. NEVER overwrites the input: an existing
+    ``memory.zip`` at the target is moved to ``memory.prev.zip`` first, so an
+    in-place upgrade (``old_zip == <out_dir>/memory.zip``) keeps the original as
+    the backup. Returns ``(out_dir, memzip, prompt_path, prompt_changed)``."""
+    import importlib.util
+
+    available = list_profiles()
+    if profile not in available:
+        raise SystemExit(f"unknown profile {profile!r}; available: "
+                         f"{', '.join(available) or '(none)'}")
+    old_zip = Path(old_zip)
+    if not old_zip.is_file():
+        raise SystemExit(f"--upgrade: OLD zip not found: {old_zip}")
+    out_dir = Path(out_dir) if out_dir else (REPO / "dist" / profile)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    out_zip = out_dir / "memory.zip"
+
+    # the merge lives in the sibling script — load it, don't re-implement it
+    spec = importlib.util.spec_from_file_location(
+        "upgrade_memory", Path(__file__).resolve().parent / "upgrade_memory.py")
+    upgrade_memory = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(upgrade_memory)
+
+    seed = PROFILES_DIR / profile / "seed"
+    seed_dir = str(seed) if seed.is_dir() and any(seed.iterdir()) else None
+
+    with tempfile.TemporaryDirectory(prefix="upgrade_") as tmp:
+        fresh = build(Path(tmp) / "code.zip", seed_dir=seed_dir,
+                      wheelhouse=wheelhouse, slim=slim)
+        old_input = old_zip
+        if out_zip.exists():                       # never clobber: back up first
+            backup = out_dir / "memory.prev.zip"
+            shutil.move(str(out_zip), str(backup))
+            if old_zip.resolve() == out_zip.resolve():   # in-place: read the backup
+                old_input = backup
+        merged = Path(tmp) / "merged.zip"
+        upgrade_memory.upgrade(str(old_input), str(fresh), str(merged))
+        shutil.move(str(merged), str(out_zip))
+
+    prompt_path = out_dir / "MASTER_PROMPT.md"
+    new_prompt = assemble_prompt(profile)
+    prompt_changed = (not prompt_path.is_file()
+                      or prompt_path.read_text("utf-8") != new_prompt)
+    prompt_path.write_text(new_prompt, "utf-8")
+    return out_dir, out_zip, prompt_path, prompt_changed
+
+
 def _download_wheels(specs, target=None, label="wheels") -> Path:
     """Download *specs* wheels for the SANDBOX platform into a fresh temp dir and
     return it (to pass as the wheelhouse). This is what ``--ast`` / ``--pptx`` run:
@@ -319,6 +378,12 @@ if __name__ == "__main__":
                     help="list the available profiles (derived from profiles/) and exit")
     ap.add_argument("--out-dir", default=None,
                     help="output directory for a --profile build (default: dist/<name>/)")
+    ap.add_argument("--upgrade", default=None, metavar="OLD_ZIP",
+                    help="upgrade an existing KB-loaded zip to the current engine AND "
+                         "regenerate the profile's MASTER_PROMPT in one step (requires "
+                         "--profile). Writes <out-dir>/memory.zip (your KB on the new "
+                         "engine) + MASTER_PROMPT.md beside it; backs up any existing "
+                         "memory.zip as memory.prev.zip — never overwrites the input.")
     ap.add_argument("--seed", default=None, help="directory of initial KB content to include")
     ap.add_argument("--no-slim", action="store_true",
                     help="bundle the language-pack wheel with ALL grammars "
@@ -357,7 +422,21 @@ if __name__ == "__main__":
         wheelhouse = str(_wh_tmp)
 
     try:
-        if args.profile:
+        if args.upgrade:
+            if not args.profile:
+                raise SystemExit("--upgrade requires --profile <name> (the prompt is "
+                                 "profile-specific). See --list-profiles.")
+            out_dir, memzip, prompt_path, changed = upgrade_profile(
+                args.profile, args.upgrade, args.out_dir, wheelhouse, slim=not args.no_slim)
+            print(f"upgraded profile '{args.profile}':")
+            print(f"  memory.zip     {memzip}   (your KB carried onto the current engine)")
+            print(f"  MASTER_PROMPT  {prompt_path}   "
+                  f"({'CHANGED — re-paste it' if changed else 'unchanged'})")
+            print("next: upload memory.zip as the agent's memory, then on first boot run "
+                  "rebuild_indexes(lib, you, 'rebuild after upgrade').")
+            if changed:
+                print("      AND re-paste MASTER_PROMPT.md into the instructions field.")
+        elif args.profile:
             out_dir, memzip, prompt_path = build_profile(
                 args.profile, args.out_dir, wheelhouse, slim=not args.no_slim)
             print(f"built profile '{args.profile}':")
