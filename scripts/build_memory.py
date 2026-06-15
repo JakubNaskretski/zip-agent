@@ -29,7 +29,10 @@ import sys
 # allow running straight from a checkout/unpack — no install needed
 sys.path.insert(0, str(__import__('pathlib').Path(__file__).resolve().parents[1]))
 
+import json
+
 from librarian.store import pack_zip
+from runtime import index_gen, layout as _layout
 
 REPO = Path(__file__).resolve().parent.parent
 _IGNORE = shutil.ignore_patterns("__pycache__", "*.pyc", "*.pyo", "*.tmp")
@@ -153,6 +156,26 @@ def build(dest="memory.zip", seed_dir=None, wheelhouse=None, slim=True) -> Path:
     gb_src = REPO / "vendor" / "graphbuilder"
     if gb_src.is_dir():
         shutil.copytree(gb_src, staging / "graphbuilder", ignore=_IGNORE)
+
+    # the lightweight runtime — travels in the zip; the agent imports it on boot
+    # (navigation needs only this; the heavy graphbuilder engine is imported lazily
+    # at ingest). See runtime/ and MASTER_PROMPT §1.
+    shutil.copytree(REPO / "runtime", staging / "runtime", ignore=_IGNORE)
+
+    # the lean manifest + an empty knowledge map (the L0 index, regenerated from
+    # the graph shards on first ingest). The manifest marks L0 as the one resource
+    # boot pulls into context; everything else is read on demand.
+    l0_path = staging / _layout.INDEX_L0
+    l0_path.parent.mkdir(parents=True, exist_ok=True)
+    l0_path.write_text(index_gen.render_l0({}), "utf-8")
+    manifest = {
+        "manifest_version": "1.0",
+        "resources": [
+            {"path": _layout.INDEX_L0, "load_mode": "on_startup", "dest": "context",
+             "purpose": "knowledge map — route every question here first"},
+        ],
+    }
+    (staging / _layout.MANIFEST).write_text(json.dumps(manifest, indent=2), "utf-8")
 
     # the on-demand pptx-draft skill bundle — the vendored pptx-grid-skill, shipped
     # verbatim at the ZIP root as `pptx/` (the wrapper drives it from there). See
