@@ -43,8 +43,39 @@ def _adapt_salesforce(src_dir, progress):
     return dg.graph, dg.kus, False
 
 
+def _adapt_mule(src_dir, progress):
+    from librarian.digest import mule
+    dg = mule.parse_mule(src_dir)          # small corpus — no progress hook
+    return dg.graph, mule.to_kus(dg), False
+
+
+def _adapt_jira(src_dir, progress):
+    from librarian.digest import jira
+    dg = jira.parse_jira(src_dir, progress=progress)
+    return dg.graph, jira.to_kus(dg), True  # issue text is captured — redact from the shard
+
+
+def _adapt_confluence(src_dir, progress):
+    from librarian.digest import confluence
+    dg = confluence.parse_confluence(src_dir, progress=progress)
+    return dg.graph, confluence.to_kus(dg), True   # page text captured — redact from the shard
+
+
+def _adapt_office(src_dir, progress):
+    from librarian.digest import office
+    dg = office.parse_office(src_dir, progress=progress)
+    return dg.graph, office.to_kus(dg), True        # section/slide text captured — redact
+
+# source → adapter. Each reuses the digest parser verbatim; only the write target
+# changed (files in the working folder, not transactional KU bodies). The graph KU
+# every adapter yields is skipped here (_SKIP_KINDS) — the merged shard is written
+# from the parsed graph directly.
 _ADAPTERS = {
     "salesforce": _adapt_salesforce,
+    "mule": _adapt_mule,
+    "jira": _adapt_jira,
+    "confluence": _adapt_confluence,
+    "docs": _adapt_office,
 }
 
 
