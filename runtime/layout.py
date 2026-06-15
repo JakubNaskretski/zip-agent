@@ -18,7 +18,7 @@ Layout::
     index/L1/<source>.md           # per-source routing aid — loaded on demand
     graph/<source>.json            # one structure-graph shard per source (on demand)
     kb/raw/<source>/<rel>          # verbatim source files (read by slice on demand)
-    kb/text/<source>/<rel>.txt     # plain-text sidecars (the search surface)
+    kb/raw/<source>/<rel>.txt      # plain-text sidecars alongside (the search surface)
     dev/                           # changelog / plan / session state (one file each)
     runtime/                       # this engine (small; imported on boot)
     graphbuilder/                  # the parsing engine (heavy; imported only at ingest)
@@ -50,11 +50,6 @@ def graph_shard(source: str) -> str:
 def raw_dir(source: str) -> str:
     """Root of a source's verbatim files, e.g. ``kb/raw/salesforce``."""
     return f"kb/raw/{source}"
-
-
-def text_dir(source: str) -> str:
-    """Root of a source's plain-text sidecars, e.g. ``kb/text/docs``."""
-    return f"kb/text/{source}"
 
 
 # The five sources an agent can hold. The label is the shard/index/dir segment.

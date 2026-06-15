@@ -22,18 +22,18 @@ def test_project_prompt_is_the_base_contract():
     p = assemble_prompt("project")
     assert "{{PROFILE_" not in p                        # every marker resolved/removed
     assert "## 1. Session start — boot" in p            # base contract present
-    assert "from librarian.bootstrap import boot" in p  # boot snippet survived
-    assert "PROPOSE" not in p                            # project has no RFP operation
+    assert "from runtime import boot" in p              # lean boot snippet survived
+    assert "DISCOVER" not in p                           # project has no RFP operation
 
 
 def test_rfp_prompt_adds_discover_over_the_same_base():
     p = assemble_prompt("rfp")
     assert "{{PROFILE_" not in p
-    assert "from librarian.bootstrap import boot" in p   # SAME base contract
+    assert "from runtime import boot" in p               # SAME lean base contract
     assert "## 4.2 DISCOVER" in p                        # operations overlay landed
     assert "CLIENT REQUIRES" in p and "OUR POC SHOWS" in p   # source-label discipline
     assert "RFP-pursuit co-pilot" in p                   # intro overlay landed
-    assert "rfp.read_workbook" in p                      # excel cell-reader wired in
+    assert "docs.read_workbook" in p                     # excel cell-reader wired in
 
 
 def test_unknown_profile_is_rejected():

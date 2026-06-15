@@ -12,7 +12,8 @@ What it does, all as single-file overlay writes (never a repack):
 
 1. Parse the tree with the source's digest adapter (pure — nothing committed).
 2. Write each parsed source file verbatim under ``kb/raw/<source>/`` (and any
-   text sidecar under ``kb/text/<source>/``), so the original is retrievable.
+   text sidecar alongside it as ``kb/raw/<source>/<rel>.txt``), so the original
+   is retrievable.
 3. Merge the freshly-parsed graph into the stored ``graph/<source>.json`` shard
    (via the existing :mod:`librarian.digest._graphmerge`, so a scoped re-ingest
    supersedes only the files it touched and never drops other files' subgraphs),

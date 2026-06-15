@@ -79,7 +79,7 @@ def render_l0(shards: dict) -> str:
         "",
         "_Each source is a separate graph shard (`graph/<source>.json`). "
         "Structure/relationship questions → the shard; prose/keyword questions → "
-        "full-text over the text sidecars (`kb/text/<source>/`)._",
+        "full-text over the text sidecars (`kb/raw/<source>/`)._",
     ]
     return "\n".join(lines) + "\n"
 

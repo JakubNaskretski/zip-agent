@@ -3,7 +3,7 @@
 All read/write through a Workspace (no held engine, single-file writes). Reuses
 the office fixture for a real .docx (heading "Overview") and .xlsx (sheet "Dane").
 """
-from runtime import docs, notes, plan, search
+from runtime import docs, layout, notes, plan, search
 from runtime.ingest import digest_to_tree
 from runtime.storage import Workspace
 
@@ -26,6 +26,8 @@ def test_search_hits_document_text(tmp_path):
     assert "Overview" in hits[0]["snippet"]
     # an absent term returns nothing (no fuzzy guess)
     assert search.search(ws, "zzzznotpresentzzzz", source="docs") == []
+    # the L0 map must advertise the SAME surface search actually scans (no phantom path)
+    assert "kb/text/" not in ws.read_text(layout.INDEX_L0)
 
 
 # -- workbook cells (the data the index deliberately omits) ----------------- #
