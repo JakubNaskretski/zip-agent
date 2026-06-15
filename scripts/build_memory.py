@@ -284,6 +284,22 @@ def build_profile(profile, out_dir=None, wheelhouse=None, slim=True):
     return out_dir, memzip, prompt_path
 
 
+def _extract_wheelhouse(zip_path, dest_dir):
+    """Extract a built zip's bundled wheelhouse (``reference/wheelhouse/*.whl``)
+    into ``dest_dir`` and return it, or ``None`` if the zip bundled no wheels —
+    so an upgrade can carry the old zip's offline capability forward verbatim."""
+    with zipfile.ZipFile(zip_path) as z:
+        wheels = [n for n in z.namelist()
+                  if n.startswith("reference/wheelhouse/") and n.endswith(".whl")]
+        if not wheels:
+            return None
+        dest = Path(dest_dir)
+        dest.mkdir(parents=True, exist_ok=True)
+        for n in wheels:
+            (dest / Path(n).name).write_bytes(z.read(n))
+        return dest
+
+
 def upgrade_profile(profile, old_zip, out_dir=None, wheelhouse=None, slim=True):
     """Upgrade a DEPLOYED, KB-loaded zip to the current engine AND regenerate the
     profile's MASTER_PROMPT in one step — the move ``build_profile`` (clean zip,
@@ -292,7 +308,11 @@ def upgrade_profile(profile, old_zip, out_dir=None, wheelhouse=None, slim=True):
     Builds a fresh clean code zip for ``profile`` (engine + seed), merges the OLD
     zip's knowledge into it (the ``upgrade_memory`` logic, imported — not
     duplicated), and writes ``<out_dir>/memory.zip`` (your KB on the new engine) +
-    ``MASTER_PROMPT.md`` beside it. NEVER overwrites the input: an existing
+    ``MASTER_PROMPT.md`` beside it. The OLD zip's bundled **wheelhouse is carried
+    forward automatically** (verbatim) so the upgrade keeps whatever offline
+    capability it had — pptx render stack, Apex AST, PDF — without re-passing
+    ``--pptx``/``--ast`` (an explicit ``wheelhouse`` overrides). NEVER overwrites
+    the input: an existing
     ``memory.zip`` at the target is moved to ``memory.prev.zip`` first, so an
     in-place upgrade (``old_zip == <out_dir>/memory.zip``) keeps the original as
     the backup. Returns ``(out_dir, memzip, prompt_path, prompt_changed)``."""
@@ -319,6 +339,19 @@ def upgrade_profile(profile, old_zip, out_dir=None, wheelhouse=None, slim=True):
     seed_dir = str(seed) if seed.is_dir() and any(seed.iterdir()) else None
 
     with tempfile.TemporaryDirectory(prefix="upgrade_") as tmp:
+        # PRESERVE the old zip's bundled capability by default: an upgrade must
+        # not silently strip the offline wheelhouse (python-pptx/Pillow/lxml for
+        # the pptx render stack, tree-sitter for the Apex AST, pypdf for PDF) it
+        # already shipped. Carry those wheels verbatim (slim=False). An explicit
+        # --wheelhouse/--ast/--pptx (wheelhouse arg set) overrides to re-bundle.
+        if wheelhouse is None:
+            carried = _extract_wheelhouse(old_zip, Path(tmp) / "wh")
+            if carried:
+                wheelhouse, slim = str(carried), False
+                print(f"upgrade: carrying forward {len(list(carried.glob('*.whl')))} "
+                      "bundled wheel(s) from the old zip (preserving its capability)")
+            else:
+                print("upgrade: old zip bundled no wheelhouse — none carried")
         fresh = build(Path(tmp) / "code.zip", seed_dir=seed_dir,
                       wheelhouse=wheelhouse, slim=slim)
         old_input = old_zip
@@ -382,8 +415,10 @@ if __name__ == "__main__":
                     help="upgrade an existing KB-loaded zip to the current engine AND "
                          "regenerate the profile's MASTER_PROMPT in one step (requires "
                          "--profile). Writes <out-dir>/memory.zip (your KB on the new "
-                         "engine) + MASTER_PROMPT.md beside it; backs up any existing "
-                         "memory.zip as memory.prev.zip — never overwrites the input.")
+                         "engine) + MASTER_PROMPT.md beside it. Carries the old zip's "
+                         "bundled wheelhouse forward automatically (pptx/AST/PDF stays "
+                         "bundled — no need to re-pass --pptx/--ast); backs up any "
+                         "existing memory.zip as memory.prev.zip — never overwrites the input.")
     ap.add_argument("--seed", default=None, help="directory of initial KB content to include")
     ap.add_argument("--no-slim", action="store_true",
                     help="bundle the language-pack wheel with ALL grammars "

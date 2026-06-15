@@ -85,6 +85,28 @@ def test_upgrade_profile_carries_kb_and_regenerates_prompt(tmp_path):
     assert text != "STALE PROMPT" and "## 4.2 DISCOVER" in text
 
 
+def test_upgrade_carries_forward_the_bundled_wheelhouse(tmp_path):
+    """An upgrade must NOT strip the offline capability the old zip already had:
+    a bundled wheelhouse is carried forward verbatim with no --pptx/--ast flag."""
+    wh = tmp_path / "wh"
+    wh.mkdir()
+    (wh / "acme_dep-1.0-py3-none-any.whl").write_bytes(b"PK\x03\x04 fake wheel bytes")
+    init = build(tmp_path / "init.zip", wheelhouse=str(wh), slim=False)
+    with zipfile.ZipFile(init) as zf:
+        assert "reference/wheelhouse/acme_dep-1.0-py3-none-any.whl" in zf.namelist()
+    s = boot(init, work_dir=tmp_path / "w")
+    s.begin("dev", "ingest one issue before upgrade").add_ku(jira_ku(7), body="x").commit()
+
+    out = tmp_path / "rfp"
+    _, memzip, _, _ = upgrade_profile("rfp", init, out_dir=out)   # NO wheel flags
+
+    with zipfile.ZipFile(memzip) as zf:
+        names = zf.namelist()
+    assert "reference/wheelhouse/acme_dep-1.0-py3-none-any.whl" in names, \
+        "the upgrade must carry the old zip's wheelhouse forward, not strip it"
+    assert boot(memzip, work_dir=tmp_path / "w2").get("jira:PROJ-7") is not None  # KB too
+
+
 def test_upgrade_profile_requires_a_known_profile(tmp_path):
     memzip = tmp_path / "memory.zip"
     boot(memzip, work_dir=tmp_path / "w")
