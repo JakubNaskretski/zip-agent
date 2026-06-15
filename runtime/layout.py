@@ -29,7 +29,9 @@ Layout::
 """
 from __future__ import annotations
 
-MANIFEST = "manifest.json"
+# the lean runtime's own manifest — a distinct name from the legacy engine's
+# KU ``manifest.json`` so both can ship in one zip during the transition.
+MANIFEST = "agent_manifest.json"
 
 INDEX_DIR = "index"
 INDEX_L0 = "index/L0.md"
