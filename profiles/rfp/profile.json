@@ -1,0 +1,6 @@
+{
+  "name": "rfp",
+  "title": "RFP pursuit co-pilot",
+  "description": "Specializes the agent as a Salesforce RFP-pursuit / discovery co-pilot (the DISCOVER operation) — working the client's RFP documents against the team's pursuit materials, the POC, and example projects to prepare and pressure-test the response. The operating contract — source labels, jobs, and the evidence rule — lives in prompt/operations.md §4.2.",
+  "overlays": ["intro", "operations", "cheatsheet"]
+}

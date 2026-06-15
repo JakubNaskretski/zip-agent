@@ -14,7 +14,7 @@ from .store import Store, pack_zip, unpack_zip
 from .librarian import Librarian, Transaction, Report, LibrarianError
 from .bootstrap import boot, Session
 from .index import rebuild_indexes, build_index, INDEX_ID
-from . import retrieve, index
+from . import retrieve, index, plan
 
 __all__ = [
     "KnowledgeUnit", "validate_ku", "content_hash",
@@ -24,5 +24,5 @@ __all__ = [
     "Store", "pack_zip", "unpack_zip",
     "Librarian", "Transaction", "Report", "LibrarianError",
     "boot", "Session",
-    "rebuild_indexes", "build_index", "INDEX_ID", "retrieve", "index",
+    "rebuild_indexes", "build_index", "INDEX_ID", "retrieve", "index", "plan",
 ]

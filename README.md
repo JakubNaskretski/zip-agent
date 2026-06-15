@@ -14,8 +14,8 @@ This repo is the agent's **engine and build** — not a research write-up.
 |------|------------|
 | [`librarian/`](librarian/) | The engine — transactional KB mutation (the Librarian), manifest, schema, changelog, bootstrap, retrieve/index, and [`digest/`](librarian/digest/) source adapters (Salesforce, Mule, Jira, Confluence, office documents). Real importable modules, `pytest`-tested. Zero runtime dependencies (stdlib only). |
 | [`vendor/graphbuilder/`](vendor/graphbuilder/) | Vendored Salesforce/OmniStudio metadata-graph parsing engine (plus the Mule/Jira/Confluence extractors and the read-only Jira/Confluence collectors), used by the [`digest/`](librarian/digest/) adapters. |
-| [`MASTER_PROMPT.md`](MASTER_PROMPT.md) | The agent's persona + operating protocols — pasted into the agent builder's instructions field, **outside** the ZIP. |
-| [`scripts/build_memory.py`](scripts/build_memory.py) | Builds the deployable `memory.zip` — the engine packaged inside its own memory. |
+| [`profiles/`](profiles/) | The thin agent factory: the shared base prompt (`profiles/_base/MASTER_PROMPT.md`) + per-use-case overlays (`project`, `rfp`). `build_memory.py --profile <name>` assembles each variant's persona + protocols into a `MASTER_PROMPT.md` pasted into the agent builder's instructions field, **outside** the ZIP. |
+| [`scripts/build_memory.py`](scripts/build_memory.py) | Builds the deployable `memory.zip` (the engine packaged inside its own memory); `--profile <name>` builds a named agent variant + its assembled prompt into `dist/<name>/`. |
 | [`tests/`](tests/) | Pytest suite for the engine and digests. |
 | [`docs/`](docs/) | How the agent works and how to use it — [`ARCHITECTURE.md`](docs/ARCHITECTURE.md) (the spec the code implements), [`INDEXING.md`](docs/INDEXING.md) (per-source retrieval strategy), [`retrieving-salesforce-samples.md`](docs/retrieving-salesforce-samples.md) (feeding it test data). |
 
@@ -50,46 +50,74 @@ sandbox that can run Python and keep one file (`memory.zip`) between sessions.
 
 ### 1. Build the deployable ZIP — pick A or B
 
+The commands below build a generic `memory.zip`. To build a **named agent
+variant** instead, add `--profile <name>` (e.g. `rfp` or `project`): it emits
+`dist/<name>/memory.zip` plus that variant's assembled `MASTER_PROMPT.md` (see
+[`profiles/README.md`](profiles/README.md)). The A/B wheelhouse choice below is
+orthogonal and applies either way.
+
 **A. Basic — regex Apex parser:**
 
 ```bash
 python3 scripts/build_memory.py memory.zip
 ```
 
-**B. Full (~3 MB) — AST Apex parser, recommended. BOTH commands, in order**
-(wheels must match the **sandbox's** platform/Python — the example is
-linux x86_64 / Python 3.12 — not your machine's):
+**B. Full — AST Apex parser, recommended.** One flag downloads the right
+wheels for the sandbox and bundles them — **apex grammar only** (the 20 MB
+language-pack is auto-slimmed to ~0.3 MB; `pypdf` rides along for the PDF digest):
+
+```bash
+python3 scripts/build_memory.py --profile rfp --ast                  # linux x86_64 / py3.12 (default)
+python3 scripts/build_memory.py --profile rfp --ast linux-x64-py311  # other sandbox? --ast <target>
+```
+
+`--ast` needs network **at build time** (the deployed sandbox stays offline), and
+the wheels must match the **sandbox's** platform/Python, not your machine's — that
+is exactly what the target picks (`--help` lists them). The build prints
+`Apex backend in this zip: AST (7 wheels bundled)`; a wrong target degrades
+harmlessly to the regex backend at boot (same as variant A).
+
+**Deck drafting (`--pptx`, the `rfp` profile).** The `rfp` agent can draft
+PowerPoint decks via the on-demand `pptx-draft` skill (vendored pptx-grid-skill).
+The skill bundle (`pptx/`) ships automatically — but *rendering* a deck in the
+sandbox needs `python-pptx`, so add `--pptx` to bundle those offline wheels
+(combine it with `--ast`):
+
+```bash
+python3 scripts/build_memory.py --profile rfp --ast --pptx
+```
+
+Without `--pptx` the agent can still browse layouts and build/validate a plan,
+but it can't render the `.pptx`. The skill, its image-placeholder model, and how
+to rebrand the deck template (`theme.yaml`) live in
+[`vendor/README.md`](vendor/README.md) (the `pptx_draft/` section). Nothing about
+the agent's knowledge base changes to enable decks — the skill is engine-side.
+
+**Advanced / custom platform** — download the wheels yourself and pass
+`--wheelhouse DIR` instead. The `0.13.0` language-pack pin is REQUIRED: it is the
+last release that bundles all grammars in the wheel — pack 1.x downloads them from
+GitHub at runtime, which an offline sandbox cannot do, and the build refuses it:
 
 ```bash
 rm -rf wheelhouse/        # pip download APPENDS — always start clean
 python3 -m pip download --only-binary :all: --platform manylinux2014_x86_64 \
     --python-version 312 -d wheelhouse/ \
     "tree-sitter>=0.25.2,<1" "tree-sitter-language-pack==0.13.0" "pypdf>=4,<7"
-python3 scripts/build_memory.py --wheelhouse wheelhouse/ memory.zip
+python3 scripts/build_memory.py --profile rfp --wheelhouse wheelhouse/
 ```
 
-The result is **~4 MB**: the builder automatically slims the language-pack
-wheel to the one grammar the agent uses (apex; 20 MB -> 0.3 MB — pass
-`--no-slim` to keep all grammars), and `pypdf` rides along for the PDF digest.
-A pack 1.x wheel in the dir is refused outright (it downloads grammars at
-runtime — unusable offline).
-
-Sanity check B before uploading: `unzip -l memory.zip | grep wheelhouse` must
-list five wheels including `tree_sitter_language_pack-0.13.0`. The 0.13 pin is
-deliberate and REQUIRED for offline sandboxes: it is the last release that
-bundles all grammars in the wheel — pack 1.x downloads grammars from GitHub on
-first use, which an offline sandbox cannot do (its node API difference is
-handled by the engine's compatibility shim either way). The build
-output also states which variant you produced. A wrong-platform wheelhouse
-degrades harmlessly at boot: the agent falls back to the regex backend,
-exactly as variant A.
+Sanity check before uploading: `unzip -l dist/rfp/memory.zip | grep wheelhouse`
+must include `tree_sitter_language_pack-0.13.0` (the load-bearing offline pin).
 
 ### 2. Set up the agent
 
-1. Paste **`MASTER_PROMPT.md`** into the agent builder's *instructions* field —
-   it lives outside the ZIP and must be re-pasted whenever it changes.
-2. Upload `memory.zip` to the agent's workspace. That file **is** the memory:
-   back it up, version it, never hand-edit its contents.
+1. Build a profile (e.g. `python3 scripts/build_memory.py --profile rfp`) and
+   paste its assembled **`dist/<profile>/MASTER_PROMPT.md`** into the agent
+   builder's *instructions* field — it lives outside the ZIP and must be
+   re-pasted whenever it changes. See [`profiles/README.md`](profiles/README.md).
+2. Upload that profile's **`dist/<profile>/memory.zip`** to the agent's
+   workspace. That file **is** the memory: back it up, version it, never
+   hand-edit its contents.
 
 On first contact the agent runs its BOOT protocol (unpack → verify manifest →
 auto-install the wheelhouse if present) and reports what its memory contains.

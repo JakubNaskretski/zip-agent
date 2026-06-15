@@ -1,0 +1,35 @@
+# Closed tag vocabulary for asset descriptions.
+# describe_assets.py consumes this for the vision prompt; the agent uses
+# tags from this list when filtering via find-asset.
+#
+# Add tags: edit this file.
+# Tags are lowercase, dash-separated, no spaces.
+
+tags:
+  - people
+  - office
+  - laptop
+  - device
+  - screen
+  - hands
+  - document
+  - chart
+  - logo
+  - abstract
+  - outdoor
+  - nature
+  - city
+  - workplace
+  - meeting
+  - workshop
+  - product
+  - prototype
+  - data
+  - factory
+  - lab
+  - team
+  - close-up
+  - portrait
+  - landscape-shot
+  - infographic
+  - illustration

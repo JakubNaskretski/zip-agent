@@ -1,0 +1,143 @@
+{
+  "version": "1",
+  "deck_title": "Q4 results — FY25 wrap-up",
+  "slides": [
+    {
+      "id": 1,
+      "recipe": "title_only",
+      "content": {
+        "title": "Q4 results",
+        "subtitle": "FY25 wrap-up — March 2026"
+      }
+    },
+    {
+      "id": 2,
+      "recipe": "section_divider",
+      "content": {
+        "number": "01",
+        "label": "Market context"
+      }
+    },
+    {
+      "id": 3,
+      "recipe": "title_bullets",
+      "content": {
+        "title": "Macro environment softened in H2",
+        "bullets": [
+          "Industry growth decelerated to 3% from 7% in H1",
+          "Customer spend tightened across enterprise segment",
+          "Win rates held flat in our top-3 verticals",
+          "Pricing power preserved on renewals over $250k ACV"
+        ]
+      }
+    },
+    {
+      "id": 4,
+      "recipe": "chart_with_takeaway",
+      "content": {
+        "title": "Sector growth decelerated through the year",
+        "chart": {
+          "type": "column",
+          "categories": ["Q1", "Q2", "Q3", "Q4"],
+          "series": [
+            {"name": "Industry growth %", "values": [7.2, 6.4, 4.1, 3.0]},
+            {"name": "Our growth %", "values": [9.8, 11.2, 12.1, 12.4]}
+          ]
+        },
+        "takeaway": [
+          "Industry growth halved across the year",
+          "Our growth steady at 11-12%",
+          "Share gains continued through softening market"
+        ]
+      }
+    },
+    {
+      "id": 5,
+      "recipe": "section_divider",
+      "content": {
+        "number": "02",
+        "label": "Our performance"
+      }
+    },
+    {
+      "id": 6,
+      "recipe": "metric_strip",
+      "content": {
+        "title": "By the numbers",
+        "metrics": [
+          {"value": "$1.8M", "label": "Q4 revenue", "delta": "+12%", "delta_status": "positive"},
+          {"value": "32%", "label": "Gross margin", "delta": "+200bps", "delta_status": "positive"},
+          {"value": "$0.4M", "label": "Free cash flow", "delta": "+$150k", "delta_status": "positive"},
+          {"value": "94%", "label": "Net retention", "delta": "-1pt", "delta_status": "warning"}
+        ]
+      }
+    },
+    {
+      "id": 7,
+      "recipe": "comparison",
+      "content": {
+        "title": "FY24 vs FY25 segment mix",
+        "left_label": "FY24",
+        "right_label": "FY25",
+        "left_body": [
+          "Enterprise 58%",
+          "Mid-market 32%",
+          "SMB 10%"
+        ],
+        "right_body": [
+          "Enterprise 64%",
+          "Mid-market 28%",
+          "SMB 8%"
+        ]
+      }
+    },
+    {
+      "id": 8,
+      "recipe": "table_full",
+      "content": {
+        "title": "Pipeline by region",
+        "table": {
+          "rows": 5,
+          "cols": 4,
+          "has_header": true,
+          "data": [
+            ["Region", "Pipeline ($M)", "Coverage", "Win rate"],
+            ["Americas", "12.4", "3.2x", "31%"],
+            ["EMEA", "7.8", "2.8x", "27%"],
+            ["APAC", "3.1", "2.1x", "24%"],
+            ["Total", "23.3", "2.9x", "28%"]
+          ]
+        }
+      }
+    },
+    {
+      "id": 9,
+      "recipe": "three_up",
+      "content": {
+        "title": "FY26 priorities",
+        "items": [
+          {"label": "Expand EMEA", "body": "Add 4 AEs in DACH and Nordics; localize self-serve."},
+          {"label": "Tighten retention", "body": "Lift NRR to 100% via proactive renewals and price uplift on multi-year."},
+          {"label": "Ship platform", "body": "Launch the unified API in Q2; deprecate v1 endpoints by Q4."}
+        ]
+      }
+    },
+    {
+      "id": 10,
+      "recipe": "quote",
+      "content": {
+        "text": "We're not winning because the market is good. We're winning because we executed when it wasn't.",
+        "attribution": "CEO, board call, Feb 2026"
+      }
+    },
+    {
+      "id": 11,
+      "recipe": "cta_closing",
+      "content": {
+        "title": "Thank you",
+        "cta": {"label": "Q&A"},
+        "contact": "questions@example.com"
+      }
+    }
+  ]
+}

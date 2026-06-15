@@ -41,6 +41,7 @@ import json
 from pathlib import Path
 
 from ..schema import KnowledgeUnit
+from . import _graphmerge
 from ._progress import done as _done
 from ._progress import extract_in_chunks as _extract_in_chunks
 from ._progress import tick as _tick
@@ -66,8 +67,8 @@ from graphbuilder.extractors import all_extractors as _gb_all_extractors
 from graphbuilder.resolvers import default_resolvers as _gb_default_resolvers
 
 # pin recorded in the built-in tool KU (and echoed in this module's docstring)
-_VENDORED_SHA = "bfd3907"   # engine main — office docx/xlsx/pdf/pptx extractors
-_VENDORED_AT = "2026-06-13"
+_VENDORED_SHA = "97c2cb6"   # engine feat/mule-phase5 — DataWeave + MUnit extractors
+_VENDORED_AT = "2026-06-15"
 
 GRAPH_ID = "salesforce:graph/sf"
 GRAPH_PATH = "kb/structured/salesforce/graph.json"
@@ -325,8 +326,12 @@ def ingest_salesforce(lib, force_app_dir, author, rationale, progress=None, *, d
     if lib.get(TOOL_ID) is None:
         tool_ku, tool_body = _tool_ku()
         txn.add_ku(tool_ku, body=tool_body)
+    existing = _graphmerge.load_existing(lib, GRAPH_ID, _gb_persistence)
     staged = 0
     for staged, (ku, body) in enumerate(dg.kus, 1):
+        if ku.id == GRAPH_ID:              # accumulate, never replace (see _graphmerge)
+            merged = _graphmerge.merge_graphs(existing, _gb_persistence.from_json(body))
+            body = _gb_persistence.to_json(merged)
         txn.ingest_ku(ku, body=body)
         _tick(progress, "sf ingest", staged)
     _done(progress, "sf ingest", staged)

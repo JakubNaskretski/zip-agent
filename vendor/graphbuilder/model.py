@@ -68,6 +68,15 @@ NODE_TYPES = {
     # numeric value caches are deliberately excluded). ----
     "docfile", "docsection", "sheet", "datatable",
     "slide", "chart",
+    # ---- MuleSoft Phase-5 taxonomy: DataWeave transformations + MUnit tests
+    # (still the SEPARATE Mule graph; structural names only — module paths,
+    # function names, mime types, test names — never DataWeave body values).
+    # `dataweave`: one per `.dwl` script (its importable `module`, `dw_version`,
+    # `output` mime). `dwmodule`: an imported module reference (external stub
+    # unless a local `.dwl` declares it). `dwfunction`: a top-level `fun`.
+    # `munittest`: one per `<munit:test>` (its `tests` edge names the flow under
+    # test — the coverage signal). ----
+    "dataweave", "dwmodule", "dwfunction", "munittest",
 }
 EDGE_TYPES = {
     "field_of", "lookup", "on", "calls", "references", "touches", "uses",
@@ -90,6 +99,10 @@ EDGE_TYPES = {
     # properties (app|config->file, file->key), config refs, build deps. ----
     "routesto", "boundto", "declares", "exposedby", "triggeredby",
     "loads", "defineskey", "usesconfig", "securedby", "dependson",
+    # ---- MuleSoft Phase-5: DataWeave imports a module (`imports`) and declares
+    # a function (`defines`); an MUnit test exercises a flow (`tests`, reused
+    # from above) and mocks a connector (`mocks`). ----
+    "imports", "defines", "mocks",
 }
 
 

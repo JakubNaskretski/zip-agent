@@ -19,8 +19,12 @@ scheduler / generic connector source), its ``config-ref`` targets and ``${…}``
 property reads, an APIkit-convention flow name decoded into method/path/config
 (:func:`parse_apikit_flow_name`), and the file's top-level artifacts —
 named global configs, ``<apikit:config>`` and the property files the app loads
-(:func:`parse_artifacts`). Property KEYS only, never values. MUnit and DataWeave
-stay out of scope (Phase 5).
+(:func:`parse_artifacts`). Property KEYS only, never values.
+
+Phase-5 scope: MUnit test suites (:func:`parse_munit` — ``<munit:test>`` nodes
+with ``tests`` edges to the flows under test) and DataWeave scripts (the
+``dataweave`` parser module — ``.dwl`` import/function/output surface). Both
+capture structural names only, never test payloads or DataWeave body values.
 """
 from __future__ import annotations
 
@@ -113,6 +117,66 @@ def resource_rel_path(path: Path) -> str:
     if i == -1:
         return path.name
     return "/".join(path.parts[i + 3:]) or path.name
+
+
+# --------------------------------------------------------------------------- #
+# Phase-5 file-scope helpers: DataWeave (.dwl) scripts + MUnit suites.
+# --------------------------------------------------------------------------- #
+def is_dataweave_path(path: Path) -> bool:
+    """True for a DataWeave script (``.dwl``) under a Mule app's ``src`` tree
+    (``src/main/resources`` modules, transformations beside flows, ``src/test``
+    data). SCOPED to ``src/<main|test>`` like the config/munit predicates — so a
+    stray or already-ingested ``.dwl`` elsewhere on disk isn't picked up. A pure
+    path-shape check; :func:`parse_dataweave` handles odd content."""
+    if path.suffix != ".dwl":
+        return False
+    parts = path.parts
+    return any(parts[i] == "src" and parts[i + 1] in ("main", "test")
+               for i in range(len(parts) - 1))
+
+
+def dataweave_rel_path(path: Path) -> str:
+    """Path tail after the nearest ``src/<main|test>`` segment — KEEPING the root
+    dir (``resources/…`` vs ``mule/…``) so two same-named `.dwl` under different
+    roots get distinct node ids (no silent merge). Bare filename if not under a
+    recognised ``src`` tree."""
+    parts = path.parts
+    for i in range(len(parts) - 2):
+        if parts[i] == "src" and parts[i + 1] in ("main", "test"):
+            return "/".join(parts[i + 2:]) or path.name
+    return path.name
+
+
+def dataweave_module(path: Path) -> str:
+    """The importable module name of a `.dwl` under ``src/main/resources``
+    (DataWeave resolves imports off the classpath = the resources root):
+    ``src/main/resources/modules/Common.dwl`` -> ``modules::Common``. A `.dwl`
+    outside the resources root has no classpath module name -> its bare stem."""
+    i = _resources_index(path.parts)
+    if i != -1:
+        tail = "/".join(path.parts[i + 3:])
+        if tail.endswith(".dwl"):
+            return tail[:-4].replace("/", "::")
+    return path.stem
+
+
+def is_munit_path(path: Path) -> bool:
+    """True for an MUnit suite: an ``.xml`` under ``src/test/munit``. Pure
+    path-shape check; :func:`parse_munit` returns ``[]`` for a non-Mule file."""
+    parts = path.parts
+    if path.suffix != ".xml":
+        return False
+    return any(parts[i:i + 3] == ("src", "test", "munit")
+               for i in range(len(parts) - 2))
+
+
+def munit_rel_path(path: Path) -> str:
+    """Path tail after ``src/test/munit``, else the bare filename."""
+    parts = path.parts
+    for i in range(len(parts) - 2):
+        if parts[i:i + 3] == ("src", "test", "munit"):
+            return "/".join(parts[i + 3:]) or path.name
+    return path.name
 
 
 def apikit_path(encoded: str) -> str:
@@ -347,3 +411,68 @@ def parse_artifacts(path: Path) -> MuleArtifacts:
                 g.config_refs.add(ref)
         arts.globals.append(g)
     return arts
+
+
+# --------------------------------------------------------------------------- #
+# Phase-5: MUnit test suites (src/test/munit/**/*.xml). Same ElementTree parse
+# as the config extractor — MUnit files ARE Mule XML, with `<munit:test>`
+# elements that flow-ref the flow under test.
+# --------------------------------------------------------------------------- #
+@dataclass
+class MunitTest:
+    name: str
+    file: str = ""
+    ignore: bool = False
+    flow_refs: list = field(default_factory=list)   # muleflow names exercised
+    mocks: list = field(default_factory=list)        # connector namespaces mocked
+
+
+def parse_munit(path: Path) -> list:
+    """MUnit ``<munit:test>`` records in one suite file. Returns ``[]`` (never
+    raises) for a non-Mule or unparseable file. For each test: its name, the
+    ``<flow-ref>`` targets it exercises and the connector namespaces it mocks.
+
+    Names only — no ``description`` text, assertion payloads or mocked values are
+    captured (the description attr is free prose that could carry secrets/PII,
+    so it is deliberately NOT read). A *tested* flow is a ``<flow-ref>`` inside
+    the test's ``<munit:execution>`` block only — the before/after lifecycle
+    blocks set up fixtures, not coverage. A mocked connector comes from
+    ``<munit-tools:mock-when processor="http:request">`` -> ``http``; a processor
+    without a ``connector:op`` form is skipped (no phantom connector)."""
+    try:
+        root = ET.parse(path).getroot()
+    except ET.ParseError:
+        return []
+    if local_name(root.tag) != "mule":
+        return []
+    rel = munit_rel_path(path)
+    tests: list = []
+    for el in root.iter():
+        if local_name(el.tag) != "test" or connector_of(el.tag) != "munit":
+            continue
+        name = el.get("name")
+        if not name:
+            continue
+        refs: list = []
+        for ex in el.iter():                           # flows UNDER TEST only
+            if local_name(ex.tag) != "execution" or connector_of(ex.tag) != "munit":
+                continue
+            for d in ex.iter():
+                if local_name(d.tag) == "flow-ref":
+                    fr = d.get("name")
+                    if fr and fr not in refs:
+                        refs.append(fr)
+        mocks: list = []
+        for d in el.iter():
+            if local_name(d.tag) != "mock-when":
+                continue
+            proc = d.get("processor", "")
+            if ":" in proc:                            # require connector:op form
+                ns = proc.split(":", 1)[0]
+                if ns and ns not in mocks:
+                    mocks.append(ns)
+        tests.append(MunitTest(
+            name=name, file=rel,
+            ignore=el.get("ignore", "").strip().lower() == "true",
+            flow_refs=refs, mocks=mocks))
+    return tests

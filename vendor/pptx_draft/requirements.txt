@@ -1,0 +1,10 @@
+python-pptx>=0.6.23
+PyYAML>=6.0
+Pillow>=10.0.0
+cairosvg>=2.7
+# Notes for the zip-agent build (see vendor/README.md):
+# - jsonschema removed: declared upstream but imported nowhere (validation is hand-rolled in reader.py).
+# - cairosvg is KEPT (it renders SVG assets) but is deliberately NOT in the offline `--pptx`
+#   wheelhouse: it needs the system Cairo library (libcairo), which a pip wheel can't supply. Where
+#   SVG assets are used, the agent installs it at runtime (`pip install cairosvg`; it has network) on
+#   a host that has Cairo. Raster (png/jpg) assets need only Pillow, which IS in the wheelhouse.

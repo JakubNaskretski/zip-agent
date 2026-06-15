@@ -1,0 +1,140 @@
+{
+  "version": "1",
+  "deck_title": "Recipe expansion demo — v2",
+  "slides": [
+    {
+      "id": 1,
+      "recipe": "title_only",
+      "background": "light_orange",
+      "content": {
+        "title": "Recipe expansion v2",
+        "subtitle": "7 new recipes + tuned section dividers + background enum"
+      }
+    },
+    {
+      "id": 2,
+      "recipe": "section_divider",
+      "background": "light_grey",
+      "content": {"number": "1", "label": "Tuned section dividers"}
+    },
+    {
+      "id": 3,
+      "recipe": "section_divider",
+      "content": {"number": "2", "label": "Now alignment-aware", "alignment": "left"}
+    },
+    {
+      "id": 4,
+      "recipe": "section_divider",
+      "background": "light_orange",
+      "content": {"number": "3", "label": "Centered variant", "alignment": "center"}
+    },
+    {
+      "id": 5,
+      "recipe": "section_divider",
+      "content": {"number": "4", "label": "New recipes"}
+    },
+    {
+      "id": 6,
+      "recipe": "single_metric",
+      "content": {
+        "title": "Single-metric hero",
+        "value": "$12.4M",
+        "caption": "Total pipeline, end of Q4",
+        "body": [
+          "Up 38% YoY",
+          "Coverage at 3.2x quota",
+          "Largest deal: $1.8M ACV"
+        ]
+      }
+    },
+    {
+      "id": 7,
+      "recipe": "big_statement",
+      "background": "light_orange",
+      "content": {
+        "statement": "We doubled revenue without doubling headcount.",
+        "sub": "And tightened margins along the way."
+      }
+    },
+    {
+      "id": 8,
+      "recipe": "agenda",
+      "content": {
+        "title": "Today's agenda",
+        "items": [
+          "Q4 results recap",
+          "What worked, what didn't",
+          "Customer themes from the quarter",
+          "FY26 priorities",
+          "Discussion"
+        ]
+      }
+    },
+    {
+      "id": 9,
+      "recipe": "numbered_list_6up",
+      "content": {
+        "title": "Six things we're betting on",
+        "items": [
+          {"label": "Platform", "body": "Unified API as the foundation."},
+          {"label": "Self-serve", "body": "Free tier with usage-based upgrade."},
+          {"label": "Enterprise", "body": "SOC2 + DLP + dedicated support."},
+          {"label": "Vertical", "body": "Healthcare-specific compliance kit."},
+          {"label": "GTM", "body": "EMEA expansion + partner channel."},
+          {"label": "Pricing", "body": "Multi-year discount on annual commits."}
+        ]
+      }
+    },
+    {
+      "id": 10,
+      "recipe": "four_up",
+      "content": {
+        "title": "Four pillars",
+        "items": [
+          {"label": "Reliability", "body": "99.99% uptime SLA on all tiers."},
+          {"label": "Latency", "body": "p99 below 200ms globally."},
+          {"label": "Security", "body": "Zero-trust, SOC2, ISO 27001."},
+          {"label": "Compliance", "body": "GDPR, HIPAA, PCI ready."}
+        ]
+      }
+    },
+    {
+      "id": 11,
+      "recipe": "six_up",
+      "content": {
+        "title": "Six product themes",
+        "items": [
+          {"label": "Workflows", "body": "Composable automation."},
+          {"label": "Insights", "body": "Real-time analytics."},
+          {"label": "Mobile", "body": "Native iOS + Android."},
+          {"label": "Integrations", "body": "200+ connectors."},
+          {"label": "Admin", "body": "Granular RBAC."},
+          {"label": "Extensibility", "body": "Public API + plugin SDK."}
+        ]
+      }
+    },
+    {
+      "id": 12,
+      "recipe": "matrix_2x2",
+      "content": {
+        "title": "Customer segments — 2×2",
+        "items": [
+          {"label": "Enterprise", "body": "5000+ seats, multi-year contracts."},
+          {"label": "Mid-market", "body": "500-5000 seats, annual."},
+          {"label": "SMB", "body": "Up to 500 seats, monthly billing."},
+          {"label": "Self-serve", "body": "Pay-as-you-go individuals."}
+        ]
+      }
+    },
+    {
+      "id": 13,
+      "recipe": "cta_closing",
+      "background": "light_orange",
+      "content": {
+        "title": "Thank you",
+        "cta": {"label": "Questions"},
+        "contact": "hello@example.com"
+      }
+    }
+  ]
+}

@@ -53,6 +53,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from ..schema import KnowledgeUnit
+from . import _graphmerge
 from ._progress import done as _done
 from ._progress import extract_in_chunks as _extract_in_chunks
 from ._progress import tick as _tick
@@ -254,8 +255,12 @@ def _plaintext(nodes) -> str:
 
 
 def parse_office(docs_dir, progress=None, *, strip_media=True) -> OfficeDigest:
-    """Parse a directory of office documents into an :class:`OfficeDigest`
-    (pure; no Librarian).
+    """Parse a single office document — or a directory of them — into an
+    :class:`OfficeDigest` (pure; no Librarian).
+
+    ``docs_dir`` may be a directory (walked recursively) OR a path to a lone
+    document (e.g. one ``.pptx``); the single-file form is treated as if it sat
+    alone in its parent folder, so ``rel`` paths stay relative to that parent.
 
     Single extraction pass via the engine's two-phase API: each handled file is
     extracted once; the per-file nodes feed the raw-KU records + sidecar text
@@ -274,7 +279,10 @@ def parse_office(docs_dir, progress=None, *, strip_media=True) -> OfficeDigest:
     root = Path(docs_dir)
     builder = (_GraphBuilder().register(*_office_extractors())
                .register_resolver(*_gb_default_resolvers()))
-    paths = sorted(p for p in root.rglob("*") if p.is_file())
+    if root.is_file():               # accept a lone document, not just a folder
+        paths, root = [root], root.parent
+    else:
+        paths = sorted(p for p in root.rglob("*") if p.is_file())
     extracted, errors = _extract_in_chunks(builder, paths, root, progress,
                                            "office parse")
 
@@ -348,8 +356,9 @@ def to_kus(d: OfficeDigest):
 
 def ingest_office(lib, docs_dir, author, rationale, progress=None, *,
                   dg=None, strip_media=True):
-    """Parse a directory of office documents and commit it through the
-    Librarian. Returns ``(Report, OfficeDigest)``. Re-ingesting unchanged
+    """Parse a single office document — or a directory of them — and commit it
+    through the Librarian (``docs_dir`` accepts either; see :func:`parse_office`).
+    Returns ``(Report, OfficeDigest)``. Re-ingesting unchanged
     documents is a no-op (I9 — the stored body's content hash drives it).
     ``progress=print`` narrates every ``EVERY`` files/KUs (MASTER_PROMPT §4).
 
@@ -365,8 +374,12 @@ def ingest_office(lib, docs_dir, author, rationale, progress=None, *,
     if dg is None:
         dg = parse_office(docs_dir, progress=progress, strip_media=strip_media)
     txn = lib.begin(author, rationale)
+    existing = _graphmerge.load_existing(lib, GRAPH_ID, _gb_persistence)
     staged = 0
     for staged, (ku, body) in enumerate(to_kus(dg), 1):
+        if ku.id == GRAPH_ID:              # accumulate, never replace (see _graphmerge)
+            merged = _graphmerge.merge_graphs(existing, _gb_persistence.from_json(body))
+            body = _gb_persistence.to_json(merged)
         txn.ingest_ku(ku, body=body)
         _tick(progress, "office ingest", staged)
     _done(progress, "office ingest", staged)

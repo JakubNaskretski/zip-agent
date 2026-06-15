@@ -1,0 +1,65 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Brief",
+  "description": "Output of Phase 1 (Discovery). The agent fills every field before moving to Phase 2.",
+  "type": "object",
+  "required": [
+    "audience",
+    "purpose",
+    "key_message",
+    "length_target",
+    "tone",
+    "must_include",
+    "must_avoid",
+    "assets_provided",
+    "data_provided"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "audience": {
+      "type": "string",
+      "minLength": 10,
+      "description": "Role + seniority + familiarity with the topic. Generic answers like 'executives' or 'stakeholders' are rejected."
+    },
+    "purpose": {
+      "type": "string",
+      "minLength": 10,
+      "description": "What decision or action the audience should take after seeing this. Not 'inform them about X'."
+    },
+    "key_message": {
+      "type": "string",
+      "minLength": 10,
+      "maxLength": 200,
+      "description": "One sentence. If the audience remembers nothing else, this is it."
+    },
+    "length_target": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 60
+    },
+    "tone": {
+      "type": "string",
+      "enum": ["data-driven", "persuasive", "tutorial", "status-update", "narrative"]
+    },
+    "must_include": {
+      "type": "array",
+      "items": {"type": "string"},
+      "description": "Concrete data points, names, dates, claims that must appear."
+    },
+    "must_avoid": {
+      "type": "array",
+      "items": {"type": "string"},
+      "description": "Taboos, NDAs, off-limits topics."
+    },
+    "assets_provided": {
+      "type": "array",
+      "items": {"type": "string"},
+      "description": "Paths or identifiers of images/charts/tables the user supplied."
+    },
+    "data_provided": {
+      "type": "array",
+      "items": {"type": "string"},
+      "description": "Numbers, tables, sources for charts and KPIs. Free-form references."
+    }
+  }
+}
