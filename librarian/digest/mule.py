@@ -35,6 +35,13 @@ property keys — never values — and build metadata) flows through this adapte
   * the Phase-3 query helpers at the bottom (``flow_for_resource`` /
     ``flows_exposed_on`` / ``entrypoints`` / ``flows_reading`` / ``api_resources``
     / ``routes_of`` / ``configs_used`` / ``secure_keys`` / ``app_dependencies``).
+
+Phase 5 (engine pin 20720d7) is likewise ADDITIVE: DataWeave ``.dwl`` scripts and
+MUnit ``src/test/munit`` suites are matched by their engine extractors, so each
+becomes a support-file raw KU (FTS-searchable + retrievable) AND contributes to
+the graph — ``dataweave``/``dwfunction``/``dwmodule`` nodes (import/function
+surface) and ``munittest`` nodes with ``tests`` edges to the flows under test.
+Query helpers: ``tests_for`` / ``untested_flows`` (coverage) and ``dw_imports``.
 """
 from __future__ import annotations
 
@@ -61,8 +68,12 @@ except ImportError:  # pragma: no cover - dev-repo path
 from graphbuilder import persistence as _gb_persistence
 from graphbuilder.core import GraphBuilder as _GraphBuilder
 from graphbuilder.extractors import all_extractors as _gb_all_extractors
+from graphbuilder.mulesoft import dataweave_rel_path as _dataweave_rel_path
 from graphbuilder.mulesoft import is_config_path as _is_config_path
+from graphbuilder.mulesoft import is_dataweave_path as _is_dataweave_path
+from graphbuilder.mulesoft import is_munit_path as _is_munit_path
 from graphbuilder.mulesoft import is_resources_path as _is_resources_path
+from graphbuilder.mulesoft import munit_rel_path as _munit_rel_path
 from graphbuilder.mulesoft import parse_artifacts as _parse_artifacts
 from graphbuilder.mulesoft import parse_config as _parse_config
 from graphbuilder.mulesoft import rel_path as _rel_path
@@ -97,10 +108,13 @@ class MuleDigest:
 
     def summary(self) -> dict:
         g = self.graph
+        types = [n.get("type") for n in g.get("nodes", [])]
         return {
             "files": len(self.files),
             "support_files": len(self.support_files),
             "flows": len(self.flows),
+            "dataweave": types.count("dataweave"),
+            "munit_tests": types.count("munittest"),
             "nodes": len(g.get("nodes", [])),
             "edges": len(g.get("edges", [])),
             "unresolved": len(self.unresolved),
@@ -126,10 +140,16 @@ def build_graph(mule_dir) -> dict:
 
 
 def _support_rel(path: Path) -> str:
-    """KU-id tail for a Phase-3 support file: ``resources/<rel>`` for anything
-    under ``src/main/resources`` (RAML, property files), the bare name for the
-    app-root files (``pom.xml`` / ``mule-artifact.json``). Never collides with a
-    config-file rel — support files are never ``.xml`` under ``src/main/mule``."""
+    """KU-id tail for a Phase-3/5 support file: ``munit/<rel>`` for an MUnit
+    suite, the engine's root-qualified rel for a DataWeave ``.dwl``
+    (``resources/…`` or ``mule/…``), ``resources/<rel>`` for other resources
+    files (RAML, property files), the bare name for app-root files (``pom.xml`` /
+    ``mule-artifact.json``). Each namespace is distinct, so no support rel
+    collides with another or with a config-file rel."""
+    if _is_munit_path(path):
+        return f"munit/{_munit_rel_path(path)}"
+    if _is_dataweave_path(path):
+        return _dataweave_rel_path(path)          # already root-qualified + unique
     if _is_resources_path(path):
         return f"resources/{_resource_rel_path(path)}"
     return path.name
@@ -398,3 +418,30 @@ def secure_keys(graph) -> list:
 def app_dependencies(graph) -> list:
     """The app's pom dependencies (``groupId:artifactId``)."""
     return sorted(n["label"] for n in graph["nodes"] if n["type"] == "pomdependency")
+
+
+# ---- Phase 5: DataWeave + MUnit ----
+def tests_for(graph, flow) -> list:
+    """MUnit test names that exercise ``flow`` — its incoming ``tests`` edges
+    (the flow-refs inside each test's ``<munit:execution>``)."""
+    fid = f"muleflow/{flow}"
+    return [e["src"].split("/", 1)[1] for e in graph["edges"]
+            if e["type"] == "tests" and e["dst"] == fid]
+
+
+def untested_flows(graph) -> list:
+    """Declared flow names with NO MUnit ``tests`` edge — the coverage gap.
+    External (referenced-but-undeclared) flows are excluded."""
+    tested = {e["dst"] for e in graph["edges"] if e["type"] == "tests"}
+    return sorted(n["label"] for n in graph["nodes"]
+                  if n["type"] == "muleflow" and not n.get("external")
+                  and n["id"] not in tested)
+
+
+def dw_imports(graph, dataweave_rel) -> list:
+    """What a DataWeave script (by its rel, e.g. ``resources/dwl/x.dwl``) imports
+    — each ``imports`` target's name (a local ``.dwl`` rel, or an external module
+    spec like ``dw::core::Strings``)."""
+    did = f"dataweave/{dataweave_rel}"
+    return [e["dst"].split("/", 1)[1] for e in graph["edges"]
+            if e["type"] == "imports" and e["src"] == did]

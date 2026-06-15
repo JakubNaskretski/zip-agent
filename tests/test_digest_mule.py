@@ -314,3 +314,72 @@ def test_phase3_entity_bridge(tmp_path):
     # a property key resolves to the file that defines it
     hits = {h["ku_id"] for h in retrieve.find_entity(con, "db.host")}
     assert "mule:resources/config-dev.yaml" in hits
+
+
+# --- Phase 5: DataWeave (.dwl) + MUnit (src/test/munit) ---------------------- #
+P5_FLOWS = """<?xml version="1.0" encoding="UTF-8"?>
+<mule xmlns="http://www.mulesoft.org/schema/mule/core">
+  <flow name="ordersFlow"><logger/></flow>
+  <flow name="legacyFlow"><logger/></flow>
+</mule>"""
+
+P5_COMMON_DWL = "%dw 2.0\nimport * from dw::core::Strings\nfun normalize(s) = lower(s)\n"
+P5_MAPPING_DWL = ("%dw 2.0\noutput application/json\n"
+                  "import normalize from modules::Common\n---\n{ id: normalize(payload.id) }\n")
+
+P5_MUNIT = """<?xml version="1.0" encoding="UTF-8"?>
+<mule xmlns="http://www.mulesoft.org/schema/mule/core"
+      xmlns:munit="http://www.mulesoft.org/schema/mule/munit"
+      xmlns:munit-tools="http://www.mulesoft.org/schema/mule/munit-tools">
+  <munit:test name="ordersFlow-happy">
+    <munit:behavior>
+      <munit-tools:mock-when processor="db:select"><munit-tools:then-return/></munit-tools:mock-when>
+    </munit:behavior>
+    <munit:execution><flow-ref name="ordersFlow"/></munit:execution>
+  </munit:test>
+</mule>"""
+
+
+def make_phase5_app(root):
+    base = root / "src" / "main" / "mule"
+    base.mkdir(parents=True)
+    (base / "orders.xml").write_text(P5_FLOWS, "utf-8")
+    res = root / "src" / "main" / "resources"
+    (res / "modules").mkdir(parents=True)
+    (res / "modules" / "Common.dwl").write_text(P5_COMMON_DWL, "utf-8")
+    (res / "dwl").mkdir(parents=True)
+    (res / "dwl" / "mapping.dwl").write_text(P5_MAPPING_DWL, "utf-8")
+    munit = root / "src" / "test" / "munit"
+    munit.mkdir(parents=True)
+    (munit / "orders-test.xml").write_text(P5_MUNIT, "utf-8")
+    return root
+
+
+def test_phase5_dataweave_and_munit(tmp_path):
+    lib = Librarian(Store(tmp_path / "mem"))
+    app = make_phase5_app(tmp_path)
+    rep, d = mule.ingest_mule(lib, app, "dev",
+                              "ingest a Mule app with DataWeave and MUnit")
+    assert rep.ok
+    # .dwl + munit stored as support-file raw KUs (retrievable + FTS), distinct ids
+    assert lib.get("mule:resources/modules/Common.dwl") is not None
+    assert lib.get("mule:resources/dwl/mapping.dwl") is not None
+    assert lib.get("mule:munit/orders-test.xml") is not None
+
+    g = mule.load_graph(lib)
+    # MUnit coverage edge resolves to the real flow under test
+    assert mule.tests_for(g, "ordersFlow") == ["orders-test.xml#ordersFlow-happy"]
+    assert "legacyFlow" in mule.untested_flows(g)        # no test -> coverage gap
+    assert "ordersFlow" not in mule.untested_flows(g)
+    # DataWeave imports: a LOCAL module resolves to the declaring .dwl rel; a
+    # std-library module stays an external module spec
+    assert "resources/modules/Common.dwl" in mule.dw_imports(g, "resources/dwl/mapping.dwl")
+    assert "dw::core::Strings" in mule.dw_imports(g, "resources/modules/Common.dwl")
+
+    s = d.summary()
+    assert s["dataweave"] == 2 and s["munit_tests"] == 1
+
+    # re-ingesting the unchanged app is an I9 no-op (graph merge stays byte-identical)
+    gen = lib.manifest.generation
+    rep2, _ = mule.ingest_mule(lib, app, "dev", "re-ingest the unchanged phase5 app")
+    assert lib.manifest.generation == gen and mule.GRAPH_ID in rep2.unchanged

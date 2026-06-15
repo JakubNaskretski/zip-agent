@@ -226,16 +226,56 @@ class ObjectResolver:
         return nid
 
 
+class DwModuleResolver:
+    """Resolve a DataWeave ``import a::b::C`` to the LOCAL ``.dwl`` that declares
+    module ``a::b::C`` (its ``dataweave`` node, matched on the node's ``module``
+    attr), else an external ``dwmodule/<spec>`` stub for a std-library or
+    out-of-tree module. Mirrors :class:`ApexMethodResolver`: index the declared
+    modules once, rebuild only when the registry grows."""
+
+    kind = "dwmodule"
+
+    def __init__(self):
+        self._by_module: dict[str, str] = {}
+        self._indexed_at = -1
+
+    def _index(self, registry: dict) -> dict:
+        if len(registry) != self._indexed_at:
+            by_module: dict[str, str] = {}
+            for nid, n in registry.items():
+                if (n.get("type") == "dataweave" and not n.get("external")
+                        and n.get("module")):
+                    # first-writer-wins on a duplicate module name -> deterministic
+                    # (registry order == alphabetical file scan), like PageResolver.
+                    by_module.setdefault(n["module"], nid)
+            self._by_module = by_module
+            self._indexed_at = len(registry)
+        return self._by_module
+
+    def resolve(self, name: str, registry: dict) -> str | None:
+        hit = self._index(registry).get(name)
+        if hit is not None:
+            return hit                             # a local .dwl declares this module
+        nid = f"dwmodule/{name}"
+        if nid in registry:
+            return nid
+        registry[nid] = {"id": nid, "type": "dwmodule", "label": name,
+                         "external": True}
+        return nid
+
+
 # Every node kind gets an external stub when a target isn't in the repo, EXCEPT
 # the kinds with dedicated resolvers: `label` (prefix normalization), `page`
-# (title -> page-id mapping), and the schema-aware `object` / `apexmethod`
-# (platform-noise suppression). Derived from the single node vocabulary so a new
-# type can never be left without a resolver.
-_DEDICATED_KINDS = {"label", "page", "object", "apexmethod"}
+# (title -> page-id mapping), the schema-aware `object` / `apexmethod`
+# (platform-noise suppression), and `dwmodule` (local-`.dwl` module linking).
+# Derived from the single node vocabulary so a new type can never be left
+# without a resolver.
+_DEDICATED_KINDS = {"label", "page", "object", "apexmethod", "dwmodule"}
 STUB_KINDS = sorted(NODE_TYPES - _DEDICATED_KINDS)
 
 
 def default_resolvers() -> list:
     # the dedicated resolvers above, plain stubs for every other kind
     return [StubResolver(k) for k in STUB_KINDS] + [
-        LabelResolver(), PageResolver(), ObjectResolver(), ApexMethodResolver()]
+        LabelResolver(), PageResolver(), ObjectResolver(), ApexMethodResolver(),
+        DwModuleResolver()]

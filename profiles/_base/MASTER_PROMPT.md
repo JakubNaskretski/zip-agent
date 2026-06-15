@@ -215,6 +215,7 @@ retrieve.resolve_name(con, "service point")
 | What's exposed on which HTTP path / all Mule entry points | `mule.flows_exposed_on(mg, "/api/*")`; `mule.entrypoints(mg)` (listeners + schedulers + queue sources) |
 | What reads a property key / what a flow reads / secret-bearing keys | `mule.flows_reading(mg, "db.host")`, `mule.keys_read_by(mg, "flow")`, `mule.secure_keys(mg)` (key NAMES only — values are never captured) |
 | A Mule flow's configs / the app's connector dependencies | `mule.configs_used(mg, "flow")`; `mule.app_dependencies(mg)` |
+| Which MUnit tests cover a flow / untested flows / what a DataWeave script imports | `mule.tests_for(mg, "flow")`, `mule.untested_flows(mg)` (coverage gap), `mule.dw_imports(mg, "resources/dwl/x.dwl")` (DataWeave `.dwl` and MUnit suites are ingested too — `dataweave`/`dwfunction`/`munittest` nodes) |
 | What a design doc / spec / mapping workbook says about X | `retrieve.search(con, "X", source="docs", lib=lib)` → hits the `docs:<path>#text` sidecars; document structure (sections/sheets/tables, `columns` attrs) via `office.load_graph(lib)`; the original file via `lib.read_body("docs:<path>")` |
 | Impact of changing `N` (anything) | `find_entity(con, "N")` → for each hit, `sf.dependents(g, node_id)` |
 | Any node's in/out edges, by type | `sf.neighbors(g, node_id, "in"\|"out", edge_type)` |
