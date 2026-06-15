@@ -3,7 +3,8 @@ DISCOVER  RFP pursuit (§4.2): read client docs + our materials + POC/example SF
           jobs: requirement→SF write-up · client gaps · our gaps · questions to ask · demo+POC-polish · commercial register · positioning (supporting)
           doc mention = lead · POC/example org = proof (name it) · SALESFORCE(general) = your knowledge, to verify · no evidence = gap
           Excel cell values aren't searchable → docs.read_workbook(ws, "<rel>.xlsx") / docs.read_table(ws, rel, "Sheet")
-          keep findings: notes.write_note(ws, "rfp/<run>/req-NNN", body, derived_from=[raw paths]); review_needed(ws) flags stale
+          keep findings in the work layer: work.write_note(ws, "rfp/<run>/req-NNN", body, derived_from=[ids/paths])
+          join the same process/requirement across docs+POC: work.add_node + work.link(a,b,kind) → work.links_of / work.show walk to every source; work.review tidies
 deck wanted (on demand, SECONDARY): ensure_engine(ws); ws.extract_tree("pptx/"); from librarian.skills import pptx_draft → pin purpose/type (client-Q&A / demo-POC / internal-gaps / why-SF) + audience + length, propose outline, get nod
           pre-fill brief from KB + your own knowledge (web only to verify, prefer KB); DON'T re-interview. list_recipes/theme/recipe_signature → validate_slide → validate_plan → render("plan.json", "draft.pptx")
           DRAFT not finish: source-label slides (CLIENT REQUIRES / OUR POC SHOWS / …); <TBC:> for unconfirmed; images = ppt.placeholder("what to paste") grey boxes the user fills

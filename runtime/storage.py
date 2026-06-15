@@ -93,6 +93,19 @@ class Workspace:
     def write_text(self, rel: str, text: str, encoding: str = "utf-8") -> Path:
         return self.write_bytes(rel, text.encode(encoding))
 
+    def remove(self, rel: str) -> bool:
+        """Delete an overlay file (best-effort; returns whether one was removed).
+
+        Removes a file written to the working folder — e.g. a work note the agent
+        is cleaning up. A member that exists ONLY in the read-only zip base can't
+        be deleted in place; it drops out on the next export only if not re-written
+        (work files written this session, or carried into the overlay, are here)."""
+        p = self.work / rel
+        if p.is_file():
+            p.unlink()
+            return True
+        return False
+
     # -- listing (union of overlay + base) -------------------------------------
     def listing(self, prefix: str = "") -> list:
         """Every resource path under ``prefix`` — overlay and base, de-duped, sorted."""

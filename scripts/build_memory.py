@@ -387,7 +387,7 @@ def _carry_kb(old_zip, ws) -> dict:
     old manifest / changelog / dev-state / search index are NOT carried — the lean
     runtime regenerates the indexes from the shards. No re-parsing: the old zip
     already holds the parsed graphs."""
-    counts = {"raw": 0, "curated": 0, "graphs": 0, "skipped": 0}
+    counts = {"raw": 0, "curated": 0, "work": 0, "graphs": 0, "skipped": 0}
     with zipfile.ZipFile(old_zip) as z:
         for n in z.namelist():
             if n.endswith("/"):
@@ -396,6 +396,8 @@ def _carry_kb(old_zip, ws) -> dict:
                 ws.write_bytes(n, z.read(n)); counts["raw"] += 1
             elif n.startswith("kb/curated/"):
                 ws.write_bytes(n, z.read(n)); counts["curated"] += 1
+            elif n.startswith("kb/work/"):       # the agent's work layer survives upgrades
+                ws.write_bytes(n, z.read(n)); counts["work"] += 1
             elif n.startswith("kb/structured/") and n.endswith("/graph.json"):
                 parts = n.split("/")                  # kb structured <source> graph.json
                 if len(parts) == 4 and parts[2] in _layout.SOURCES:
@@ -405,7 +407,7 @@ def _carry_kb(old_zip, ws) -> dict:
                     counts["skipped"] += 1
             elif n.startswith("graph/") and n.endswith(".json"):
                 src = n[len("graph/"):-len(".json")]   # lean source zip: already a shard
-                if "/" not in src and src in _layout.SOURCES:
+                if "/" not in src and (src in _layout.SOURCES or src == "work"):
                     ws.write_bytes(n, z.read(n)); counts["graphs"] += 1
                 else:
                     counts["skipped"] += 1
@@ -569,8 +571,8 @@ if __name__ == "__main__":
             out_dir, memzip, prompt_path, counts = migrate_to_lean(
                 args.migrate, args.profile, args.out_dir, wheelhouse, slim=not args.no_slim)
             print(f"migrated profile '{args.profile}' onto the lightweight runtime:")
-            print(f"  carried: {counts['raw']} raw files, {counts['curated']} curated "
-                  f"notes, {counts['graphs']} graph shard(s) (no re-parse)")
+            print(f"  carried: {counts['raw']} raw files, {counts['work']} work files, "
+                  f"{counts['graphs']} graph shard(s) (no re-parse)")
             print(f"  memory.zip     {memzip}   (your KB on the lean runtime)")
             print(f"  MASTER_PROMPT  {prompt_path}")
             print("deploy: upload memory.zip, then paste MASTER_PROMPT.md into the "

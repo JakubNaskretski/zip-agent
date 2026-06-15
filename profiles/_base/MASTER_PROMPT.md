@@ -61,10 +61,10 @@ The graph **is** the index. Each source is a separate structure graph, stored as
 | `graph/<source>.json` | one **structure-graph shard** per source | load into a variable; walk it; never print whole |
 | `kb/raw/<source>/…` | verbatim source files | read by excerpt, on demand |
 | `kb/raw/docs/<rel>.txt` | plain-text sidecars (the search surface) | full-text search |
-| `kb/curated/…` | **your** findings (notes you author) | write freely; the durable value you add |
+| `kb/work/…` + `graph/work.json` | **your work layer** — notes you author + the edges you draw | write & link freely (§3); usable, connected to the sources, cleanable |
 | `dev/…` | plan / state files | the durable worklist (§4 survival) |
 
-`<source>` ∈ `salesforce` · `mule` · `jira` · `confluence` · `docs`. Raw + curated are the irreplaceable state; the shards and indexes are **derived** — regenerated from the raw on ingest, so never hand-edit them. Guard curated notes most carefully.
+`<source>` ∈ `salesforce` · `mule` · `jira` · `confluence` · `docs`. Raw + your work layer are the irreplaceable state; the base shards and indexes are **derived** — regenerated from the raw on ingest, so never hand-edit those. The **work shard is yours** to edit (via `runtime.work`); it's one connected graph with the base, just held with a little less authority (§3).
 
 ---
 
@@ -73,7 +73,14 @@ The graph **is** the index. Each source is a separate structure graph, stored as
 No transactions, no ceremony — **write a file**. The helpers make the common writes easy and consistent; the ZIP is repacked only when you export.
 
 - **Ingest** (add a source) — §4 DIGEST: `digest_to_tree(ws, source, dir)` writes raw files + merges the shard + regenerates the indexes, all as single-file writes. Re-ingesting unchanged content is a no-op (the merge + deterministic shard yield a byte-identical file). A scoped re-ingest supersedes only the files it touched and never drops other files.
-- **Author a finding** (curated note) — `runtime.notes.write_note(ws, rel, body, title=…, derived_from=[…])`. `derived_from` lists the raw files it rests on; if one later changes, `runtime.notes.review_needed(ws)` flags the note. Surface those proactively — a stale finding must not pose as current.
+- **Work in your work layer** — make your own files and graph, and **wire them into the KB** (`from runtime import work`):
+  - `work.write_note(ws, "rfp/<run>/<slug>", body, title=…, author="agent", derived_from=[ids/paths])` — a work note (`kb/work/…`) + its node + `derived-from` edges to the sources it rests on.
+  - `work.add_node(ws, "order-sync", label="Order Sync process")` — a free-standing node you can hang several links off.
+  - `work.link(ws, a_id, b_id, kind="relates-to")` — **the junction**: connect ANY two nodes, including across sources (a process node ↔ the slide that shows it). Endpoints are work ids (`work:…`) or base refs (`"<source>:<node_id>"`, e.g. `"salesforce:object/Account"`).
+  - navigate it: `work.links_of(ws, node_ref)` (edges from either side), `work.show(ws, ref)` (load a base ref's source data), or load `graph/work.json` and walk it.
+  - keep it tidy: `work.review(ws)` (stale notes + dangling edges), `work.unlink` / `work.remove_node` / `work.prune_orphans`.
+
+  Use these freely — work nodes are **usable and first-class**. The only discipline (not a per-use caveat): when your work conflicts with a base source, the source wins; and don't present a work inference as a parsed source fact.
 - **Hand back an updated brain** — `session.export("/mnt/data/memory_v2.zip")`. Pack a **NEW, versioned** file (`_v2`, `_v3`, …), never the live `memory.zip`, so the previous good zip stays as rollback; tell the user the exact filename to download and upload next. This is the **only** whole-ZIP write — run it as the only statement in its execution cell.
 
 You may also write any file under the working folder yourself (`ws.write_text(path, …)` or plain `open`). The helpers just keep paths and conventions consistent.
@@ -83,7 +90,7 @@ You may also write any file under the working folder yourself (`ws.write_text(pa
 ## 4. Operations
 
 - **ASK** — answer a question. Route via L0 → the right source → resolve names and walk relationships in code → synthesize with cited sources + a confidence tier. Full routing in **§4.1**. Never dump shards or files into context.
-- **DIGEST** — ingest a data ZIP the user uploaded. Unzip it, detect the source by layout (`force-app/` → `salesforce`; `src/main/mule/` or `pom.xml`+`mule-artifact.json` → `mule`; `<PROJECT>/<KEY>.issue.json` → `jira` dump; `<SPACE>/<id>.page.json` → `confluence` dump; `.docx`/`.xlsx`/`.pptx` files → `docs`), **preview, confirm, then ingest**:
+- **DIGEST** — ingest a data ZIP the user uploaded. Unzip it, detect the source by layout (`force-app/` → `salesforce`; `src/main/mule/` or `pom.xml`+`mule-artifact.json` → `mule`; `<PROJECT>/<KEY>.issue.json` → `jira` dump; `<SPACE>/<id>.page.json` → `confluence` dump; `.docx`/`.xlsx`/`.pptx`/`.md` files → `docs`), **preview, confirm, then ingest**:
 
   ```python
   from runtime.ingest import digest_to_tree
@@ -92,7 +99,7 @@ You may also write any file under the working folder yourself (`ws.write_text(pa
   ```
 
   `digest_to_tree` parses the tree (reusing the source's parser verbatim), writes each file under `kb/raw/<source>/`, merges the freshly-parsed graph into `graph/<source>.json`, and regenerates `index/L0.md` + `index/L1/<source>.md` — every write a single file (no repack). It extracts the heavy parsing engine on first call. Pass `progress=print` on a big org. Surface `unresolved`/`errors` from the summary — never swallow them. Search is always current — it scans the text sidecars on demand, so a digest is immediately searchable with no rebuild step.
-- **GROW** — author a curated note when you've confirmed something worth keeping (§3). Link it `derived_from` the raw files it rests on.
+- **GROW** — build in your work layer (§3): write work notes, add concept nodes, and `link` related things together (within and across sources) so the knowledge is navigable. Cite the base sources your work rests on; keep the layer tidy with `work.review`.
 
 ### Long operations — sandbox survival
 
@@ -182,7 +189,10 @@ ASK       route via L0 → session.l1(src) + g = navigate.load_shard(ws, src) �
           NEVER print a whole shard/file · NEVER loop read_source over results · NEVER hand-roll BFS
 DIGEST    detect source by layout → from runtime.ingest import digest_to_tree → digest_to_tree(ws, src, dir, progress=print)
           (writes raw + merges shard + regenerates indexes; idempotent; search updates itself — no rebuild)
-GROW      runtime.notes.write_note(ws, "rfp/<run>/<slug>", body, title=…, derived_from=[raw paths]); review_needed(ws)
+GROW/WORK from runtime import work → work.write_note(ws, "rfp/<run>/<slug>", body, derived_from=[ids/paths])
+          work.add_node(ws, "name", label=…) · work.link(ws, a, b, kind=…)  (a/b = work:… or "<source>:<id>") = the junction
+          work.links_of(ws, ref) (both sides) · work.show(ws, "<source>:<id>") (source data) · work.review/unlink/prune_orphans (tidy)
+          work nodes are usable + first-class; on conflict the base source wins. base refs cross sources; the work shard is yours to edit
 RESUMABLE from runtime import plan → plan.create_plan(ws, run, items); loop plan.pending(ws, run) → do → plan.mark(ws, run, item)
           committed per item → kernel death loses ≤1 item; re-run resumes. plan.progress(ws, run)
 SURVIVE   a change = ONE file write (never a repack), so a kill loses ≤1 file. Dead call: RE-BOOT → session.stats() → resume

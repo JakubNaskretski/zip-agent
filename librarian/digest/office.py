@@ -200,10 +200,14 @@ class OfficeDigest:
 # parse  (upload dir -> engine graph + per-document records)
 # --------------------------------------------------------------------------- #
 def _office_extractors():
-    """The office extractors only (``source == "docs"``: docx + xlsx) — keeps
-    the build strictly docs-sourced even if foreign files share the tree (a
-    ``*.issue.json`` next to the documents never becomes a docfile)."""
-    return [e for e in _gb_all_extractors() if getattr(e, "source", None) == "docs"]
+    """The docs-sourced extractors: the vendored office ones (docx/xlsx/pptx/pdf)
+    plus the local markdown extractor — so a ``.md`` in a docs upload is parsed
+    like a Word doc. Filtering to ``source == "docs"`` keeps the build strictly
+    docs-sourced even if foreign files share the tree (a ``*.issue.json`` next to
+    the documents never becomes a docfile)."""
+    from ._markdown import MarkdownExtractor
+    engine = [e for e in _gb_all_extractors() if getattr(e, "source", None) == "docs"]
+    return engine + [MarkdownExtractor()]
 
 
 def _plaintext(nodes) -> str:

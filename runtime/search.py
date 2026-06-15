@@ -51,9 +51,16 @@ def _candidates(ws, source) -> list:
     sources = [source] if source else list(layout.SOURCES)
     out = []
     for s in sources:
+        if s == "work":
+            continue                     # work files live in kb/work, handled below
         for rel in ws.listing(layout.raw_dir(s)):
             if rel.endswith(_SCAN_EXT):
                 out.append((s, rel))
+    # the agent's work layer (kb/work) — searched unless a specific base source was asked for
+    if source in (None, "work"):
+        for rel in ws.listing(layout.WORK_DIR):
+            if rel.endswith(_SCAN_EXT):
+                out.append(("work", rel))
     return out
 
 

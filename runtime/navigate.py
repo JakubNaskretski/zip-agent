@@ -41,8 +41,12 @@ _EMPTY = {"nodes": [], "edges": [], "unresolved": [], "errors": []}
 
 
 def present_sources(ws) -> list:
-    """Sources that actually have a shard in this agent's memory."""
-    return [s for s in layout.SOURCES if ws.exists(layout.graph_shard(s))]
+    """Shards present in this agent's memory — the base sources, plus the agent's
+    own ``work`` layer when it has one (one connected graph)."""
+    out = [s for s in layout.SOURCES if ws.exists(layout.graph_shard(s))]
+    if ws.exists(layout.WORK_SHARD):
+        out.append("work")
+    return out
 
 
 def load_shard(ws, source: str) -> dict:

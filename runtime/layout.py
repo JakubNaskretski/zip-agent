@@ -54,3 +54,10 @@ def raw_dir(source: str) -> str:
 
 # The five sources an agent can hold. The label is the shard/index/dir segment.
 SOURCES = ("salesforce", "mule", "jira", "confluence", "docs")
+
+# The work layer — the agent's OWN editable overlay: a graph shard it hand-authors
+# (notes + the edges it draws, including cross-source joins) and its work files.
+# Kept distinct from the base sources above only so it's identifiable and cleanable
+# — not fenced off; its edges point at base node refs to join the two (see runtime.work).
+WORK_SHARD = "graph/work.json"
+WORK_DIR = "kb/work"

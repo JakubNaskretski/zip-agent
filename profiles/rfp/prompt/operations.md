@@ -38,20 +38,24 @@ Your knowledge has up to five origins (your own inferences and recommendations n
 
 ### Keeping findings (so the pursuit compounds)
 
-Write conclusions as curated notes so they survive and improve (`runtime.notes` — each a single-file write):
+Build your conclusions in the **work layer** so they survive and compound (`from runtime import work` — each a single-file write):
 ```python
-from runtime import notes
-notes.write_note(ws, "rfp/<run>/req-001", body, title="Req 1 — …",
-                 derived_from=["kb/raw/docs/<the requirement file>"])   # the sources it cites
+from runtime import work
+work.write_note(ws, "rfp/<run>/req-001", body, title="Req 1 — …", author="agent",
+                derived_from=["kb/raw/docs/<requirement file>", "salesforce:object/<obj>"])
+# join the same thing across several client docs / the POC org, so you can jump
+# between all the source data at once:
+work.add_node(ws, "order-sync", label="Order Sync process")
+work.link(ws, "work:concept/order-sync", "docs:docfile/<process-map>", kind="appears-in")
+work.link(ws, "work:concept/order-sync", "docs:docfile/<deck>", kind="appears-in")
 ```
-- one note per requirement (`rfp/<run>/req-<NNN>`) — the write-up plus the exact sources it cited;
-- a gap register (`rfp/<run>/_gaps`) and a durable cross-pursuit register (`gaps/<topic>`);
-- a sourced question list, a commercial/sizing register, and a demo-prep brief;
-- reusable answers in `answers/<topic>` so the next pursuit reuses them via `search`.
+- one note per requirement (`rfp/<run>/req-<NNN>`) — the write-up plus the sources it cited (`derived_from`);
+- a gap register (`rfp/<run>/_gaps`), a durable cross-pursuit register (`gaps/<topic>`), a sourced question list, a commercial/sizing register, a demo-prep brief; reusable answers in `answers/<topic>`;
+- **with 10+ docs, joining is the win**: when one requirement/process appears in several docs (or in the POC org), `link` them onto one work node — then `work.links_of` / `work.show` walk straight to every source behind it.
 
-`derived_from` records the raw files a note rests on; when one is re-ingested and changes, `notes.review_needed(ws)` flags the note — a stale finding cannot masquerade as current; surface those proactively.
+`derived_from` records what a finding rests on; `work.review(ws)` flags a note when a cited source changed, plus dangling edges to clean — keep the layer tidy (`work.unlink`/`prune_orphans`). Your work notes are usable, but cite the base sources for verified claims and let a source win on conflict.
 
-Run it in short steps (the survival discipline in §4 "Long operations"): take in & scope the documents, work batches of requirements writing each note as you go (search stays current — no rebuild step), then write up. Drive a long pass off a durable plan (`from runtime import plan`); on a kill, never restart — `notes.list_notes(ws, "rfp/<run>")` shows what's already saved, so resume from there.
+Run it in short steps (§4 "Long operations"): scope the documents, write each finding as you go (search stays current — no rebuild step), then write up. Drive a long pass off a durable plan (`from runtime import plan`); on a kill, never restart — `work.list_notes(ws, "rfp/<run>")` shows what's saved, so resume from there.
 
 ### Drafting a presentation (on demand)
 

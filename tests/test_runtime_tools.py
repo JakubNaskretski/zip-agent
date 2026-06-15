@@ -3,7 +3,7 @@
 All read/write through a Workspace (no held engine, single-file writes). Reuses
 the office fixture for a real .docx (heading "Overview") and .xlsx (sheet "Dane").
 """
-from runtime import docs, layout, navigate, notes, plan, search
+from runtime import docs, layout, navigate, plan, search, work
 from runtime.ingest import digest_to_tree
 from runtime.storage import Workspace
 
@@ -48,19 +48,19 @@ def test_notes_write_read_and_review(tmp_path):
     ws = _docs_ws(tmp_path)
     src = "kb/raw/docs/specs/Acme Integration Spec.docx"
 
-    path = notes.write_note(ws, "rfp/acme/req-001", "Bulk import is met by X.",
-                            title="Req 1", derived_from=[src])
+    path = work.write_note(ws, "rfp/acme/req-001", "Bulk import is met by X.",
+                           title="Req 1", derived_from=[src])
     assert path.endswith(".md")
-    note = notes.read_note(ws, "rfp/acme/req-001")
+    note = work.read_note(ws, "rfp/acme/req-001")
     assert note["frontmatter"]["title"] == "Req 1"
     assert "Bulk import" in note["body"]
-    assert notes.list_notes(ws, "rfp/acme")
+    assert work.list_notes(ws, "rfp/acme")
 
     # fresh: nothing to review
-    assert notes.review_needed(ws) == []
+    assert work.review(ws)["stale"] == []
     # the source changes underneath the note -> it is flagged
     ws.write_bytes(src, b"PK\x03\x04 different bytes")
-    flagged = notes.review_needed(ws)
+    flagged = work.review(ws)["stale"]
     assert flagged and flagged[0]["note"] == path and src in flagged[0]["changed"]
 
 
@@ -92,7 +92,7 @@ def test_excerpt_survives_casefold_length_change():
 # -- a malformed/hand-written note never crashes read_note or the staleness scan -- #
 def test_notes_tolerate_malformed_frontmatter(tmp_path):
     ws = Workspace(None, str(tmp_path / "work"))
-    ws.write_text("kb/curated/rfp/run/raw.md", "---\nnot json, no closing fence\nbody text")
-    note = notes.read_note(ws, "rfp/run/raw")
+    ws.write_text("kb/work/rfp/run/raw.md", "---\nnot json, no closing fence\nbody text")
+    note = work.read_note(ws, "rfp/run/raw")
     assert note["frontmatter"] == {} and "body text" in note["body"]
-    assert notes.review_needed(ws) == []          # the scan must not raise
+    assert work.review(ws)["stale"] == []         # the scan must not raise

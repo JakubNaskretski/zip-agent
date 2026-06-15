@@ -26,6 +26,7 @@ SOURCE_BLURB = {
     "jira":       "Jira issues, epics, sprints, releases, components (issue text is full-text only)",
     "confluence": "Confluence spaces and pages (page text is full-text only)",
     "docs":       "office documents — sections, sheets, tables, slides (structure only)",
+    "work":       "your work layer — notes you authored + the edges you drew (incl. cross-source joins)",
 }
 
 _L1_SAMPLE = 30          # most-connected nodes shown for orientation
