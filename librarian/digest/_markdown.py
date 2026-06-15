@@ -49,7 +49,7 @@ class MarkdownExtractor:
             if in_fence:
                 continue
             m = _HEADING.match(ln)
-            if m:
+            if m and m.group(2).strip():          # non-empty heading text only (cf. docx)
                 marks.append((i, len(m.group(1)), m.group(2).strip()))
 
         first = marks[0][0] if marks else len(lines)
@@ -86,5 +86,6 @@ class MarkdownExtractor:
             stack.append((lvl, ordinal))
         return nodes, edges
 
-
-EXTRACTORS = [MarkdownExtractor()]
+# NOTE: no module-level EXTRACTORS list — this lives in librarian/digest, not the
+# engine's auto-discovered vendor/graphbuilder/extractors/, so it isn't picked up
+# by all_extractors(). office._office_extractors() imports the class directly.

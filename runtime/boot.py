@@ -95,7 +95,12 @@ class Session:
 
     # -- the one place a whole zip is written ----------------------------------
     def export(self, out_zip: str) -> str:
-        """Pack a NEW versioned zip (never the live ``memory.zip``) and return its path."""
+        """Refresh the indexes from current state, then pack a NEW versioned zip
+        (never the live ``memory.zip``). Regenerating first means the handed-off
+        brain's L0/L1 reflect everything — including a work layer added since the
+        last ingest."""
+        from . import index_gen           # lazy — boot stays free of it
+        index_gen.regenerate(self.ws)
         return str(self.ws.export(out_zip))
 
     def stats(self) -> dict:

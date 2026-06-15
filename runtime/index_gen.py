@@ -62,7 +62,7 @@ def render_l0(shards: dict) -> str:
         "| Source | Nodes | Edges | Top node types |",
         "|--------|------:|------:|----------------|",
     ]
-    present = [s for s in layout.SOURCES if s in shards]
+    present = [s for s in (*layout.SOURCES, "work") if s in shards]
     for s in present:
         g = shards[s]
         counts = graphwalk.type_counts(g)

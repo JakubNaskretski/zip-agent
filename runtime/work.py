@@ -37,7 +37,14 @@ _EMPTY = {"nodes": [], "edges": [], "unresolved": [], "errors": []}
 def _load(ws) -> dict:
     if not ws.exists(layout.WORK_SHARD):
         return {k: [] for k in _EMPTY}
-    data = json.loads(ws.read_text(layout.WORK_SHARD))
+    try:
+        data = json.loads(ws.read_text(layout.WORK_SHARD))
+    except json.JSONDecodeError as e:
+        # the shard is yours to hand-edit — but a typo must not crash with a cryptic
+        # traceback, nor let a mutator silently clobber your (broken) edits.
+        raise ValueError(
+            f"{layout.WORK_SHARD} is not valid JSON ({e}) — fix or delete it "
+            "before editing the work layer") from e
     return {k: list(data.get(k, []) or []) for k in _EMPTY}
 
 
@@ -114,6 +121,8 @@ def write_note(ws, rel: str, body: str, *, title=None, author: str = "agent",
     (``"<source>:<id>"``) or raw file paths (``"kb/raw/docs/x.docx"``); file paths are
     hashed for staleness (`review`). ``author`` is ``"agent"`` or ``"user"``. Returns
     the file path."""
+    if not _note_rel(rel):
+        raise ValueError("write_note needs a non-empty rel (e.g. 'rfp/run/req-001')")
     derived_from = list(derived_from)
     src_hashes = {p: _hash(ws, p) for p in derived_from if ws.exists(p)}
     fm = {"title": title or _note_rel(rel), "author": author,
@@ -248,7 +257,11 @@ def show(ws, node_ref: str) -> dict:
 # --------------------------------------------------------------------------- #
 def review(ws, prefix: str = "") -> dict:
     """What to clean up: notes whose `derived_from` source files changed/vanished
-    (`stale`), and edges referencing a deleted work node (`orphan_edges`)."""
+    (`stale`), and edges referencing a deleted work node (`orphan_edges`).
+
+    Orphan detection covers ``work:`` endpoints only — a dangling base ref
+    (e.g. a link to a `salesforce:` node that was later retired) is NOT flagged,
+    to avoid loading every base shard on each review."""
     g = _load(ws)
     node_ids = {n.get("id") for n in g["nodes"]}
     stale = []

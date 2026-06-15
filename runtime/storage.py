@@ -47,6 +47,7 @@ class Workspace:
         self.work.mkdir(parents=True, exist_ok=True)
         self._zf: Optional[zipfile.ZipFile] = None
         self._base_names: Optional[frozenset] = None
+        self._removed: set = set()        # tombstones — base members deleted this session
 
     # -- base (zip) access, cached so we open the archive at most once ---------
     def _zip(self) -> Optional[zipfile.ZipFile]:
@@ -69,14 +70,16 @@ class Workspace:
 
     # -- reads (overlay shadows base) ------------------------------------------
     def exists(self, rel: str) -> bool:
-        return (self.work / rel).is_file() or rel in self._base_listing()
+        if (self.work / rel).is_file():
+            return True
+        return rel in self._base_listing() and rel not in self._removed
 
     def read_bytes(self, rel: str) -> bytes:
         f = self.work / rel
         if f.is_file():
             return f.read_bytes()
         zf = self._zip()
-        if zf is not None and rel in self._base_listing():
+        if zf is not None and rel in self._base_listing() and rel not in self._removed:
             return zf.read(rel)
         raise FileNotFoundError(rel)
 
@@ -94,17 +97,21 @@ class Workspace:
         return self.write_bytes(rel, text.encode(encoding))
 
     def remove(self, rel: str) -> bool:
-        """Delete an overlay file (best-effort; returns whether one was removed).
+        """Remove a file — e.g. a work note the agent is cleaning up. Returns whether
+        anything was removed.
 
-        Removes a file written to the working folder — e.g. a work note the agent
-        is cleaning up. A member that exists ONLY in the read-only zip base can't
-        be deleted in place; it drops out on the next export only if not re-written
-        (work files written this session, or carried into the overlay, are here)."""
+        Deletes the overlay copy if present, and **tombstones** the path so a member
+        that exists only in the read-only zip base is shadowed everywhere this session
+        (read / exists / listing skip it; export omits it) — so a removed file does
+        NOT reappear in the next exported zip. Tombstones are in-memory: a re-boot
+        from the same base forgets them, until the removal is baked in by an export."""
         p = self.work / rel
-        if p.is_file():
+        removed_overlay = p.is_file()
+        if removed_overlay:
             p.unlink()
-            return True
-        return False
+        in_base = rel in self._base_listing()
+        self._removed.add(rel)
+        return removed_overlay or in_base
 
     # -- listing (union of overlay + base) -------------------------------------
     def listing(self, prefix: str = "") -> list:
@@ -117,7 +124,7 @@ class Workspace:
                     rel = os.path.relpath(os.path.join(dirpath, fn), root).replace(os.sep, "/")
                     if rel.startswith(prefix):
                         names.add(rel)
-        return sorted(names)
+        return sorted(n for n in names if n not in self._removed)
 
     def extract_tree(self, prefix: str, dest: Optional[str] = None) -> Path:
         """Materialise a base subtree (e.g. ``graphbuilder/``) onto disk under

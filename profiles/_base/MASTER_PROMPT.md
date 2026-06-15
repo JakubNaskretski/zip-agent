@@ -76,7 +76,7 @@ No transactions, no ceremony — **write a file**. The helpers make the common w
 - **Work in your work layer** — make your own files and graph, and **wire them into the KB** (`from runtime import work`):
   - `work.write_note(ws, "rfp/<run>/<slug>", body, title=…, author="agent", derived_from=[ids/paths])` — a work note (`kb/work/…`) + its node + `derived-from` edges to the sources it rests on.
   - `work.add_node(ws, "order-sync", label="Order Sync process")` — a free-standing node you can hang several links off.
-  - `work.link(ws, a_id, b_id, kind="relates-to")` — **the junction**: connect ANY two nodes, including across sources (a process node ↔ the slide that shows it). Endpoints are work ids (`work:…`) or base refs (`"<source>:<node_id>"`, e.g. `"salesforce:object/Account"`).
+  - `work.link(ws, a_id, b_id, kind="relates-to")` — **the junction**: connect ANY two nodes, including across sources (a process node ↔ the slide that shows it). Endpoints are work ids (`work:…`) or base refs (`"<source>:<node_id>"`). **Ids from `find_nodes`/`walk`/`load_shard` are BARE** (`"object/Account"`) — qualify a base node with `work.ref(source, id)` → `"salesforce:object/Account"` before `link`/`links_of`/`show`, or the edge silently dangles (it points at nothing and won't resolve).
   - navigate it: `work.links_of(ws, node_ref)` (edges from either side), `work.show(ws, ref)` (load a base ref's source data), or load `graph/work.json` and walk it.
   - keep it tidy: `work.review(ws)` (stale notes + dangling edges), `work.unlink` / `work.remove_node` / `work.prune_orphans`.
 
@@ -192,6 +192,7 @@ DIGEST    detect source by layout → from runtime.ingest import digest_to_tree 
 GROW/WORK from runtime import work → work.write_note(ws, "rfp/<run>/<slug>", body, derived_from=[ids/paths])
           work.add_node(ws, "name", label=…) · work.link(ws, a, b, kind=…)  (a/b = work:… or "<source>:<id>") = the junction
           work.links_of(ws, ref) (both sides) · work.show(ws, "<source>:<id>") (source data) · work.review/unlink/prune_orphans (tidy)
+          ids from find_nodes/walk are BARE — qualify a base node with work.ref(source, id) before link/links_of/show, else the edge dangles
           work nodes are usable + first-class; on conflict the base source wins. base refs cross sources; the work shard is yours to edit
 RESUMABLE from runtime import plan → plan.create_plan(ws, run, items); loop plan.pending(ws, run) → do → plan.mark(ws, run, item)
           committed per item → kernel death loses ≤1 item; re-run resumes. plan.progress(ws, run)
