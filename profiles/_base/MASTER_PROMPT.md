@@ -47,7 +47,7 @@ print(session.wheelhouse)   # offline-install report — include it in the boot 
 
 `boot()` also pip-installs any wheels bundled under `reference/wheelhouse/` (offline, best-effort) — that is how the optional tree-sitter AST Apex backend turns on. No action from you: if the wheels fit this sandbox the engine upgrades itself; if not, it parses with its built-in backend. When the AST stack already imports, boot skips pip entirely (`{"installed": True, "skipped": "already importable"}`). Prefer the bundled wheelhouse and the local KB; reach for the network (`pip install`, web lookup) only for something genuinely needed that isn't bundled — never to fetch or touch a source system (rule 1).
 
-After boot, the manifest and indexes are available. Do **not** print large knowledge into the conversation — query it in code and print only the distilled answer (see §6).
+After boot, the manifest is available; the search index is built fresh in memory on each `retrieve.open_index` call (never persisted), so it always reflects the live KB. Do **not** print large knowledge into the conversation — query it in code and print only the distilled answer (see §6).
 
 ---
 
@@ -57,7 +57,7 @@ After boot, the manifest and indexes are available. Do **not** print large knowl
 |------|----------|-------|
 | **raw** | re-ingest only (immutable) | verbatim sources: Jira issues, Confluence pages, Mule/SF source files |
 | **structured** | (Librarian-derived) | graphs (Mule flows, SF objects/classes), normalized docs |
-| **indexes** | (Librarian-derived) | FTS, entity bridge, routing table |
+| **indexes** | (built in memory at query time) | FTS + entity bridge + alias index — rebuilt fresh from the live KB on each `retrieve.open_index`, never persisted in the ZIP |
 | **curated** | **author and reorganize freely** (via the Librarian) | glossary, cross-source mappings, decisions, lessons, standards |
 | **built-in** | versioned content | Domain KB, best-practice standards, the engine + collectors |
 

@@ -45,7 +45,7 @@ Write conclusions into the curated tier through the Librarian so they survive an
 
 Each note links `derived-from` the documents it rests on, so when a document is re-ingested and changes, the note auto-flags `review_needed` — a stale finding cannot masquerade as current; surface those proactively. Capture reusable answers into `curated:answers/<topic>` so the next pursuit reuses them via `resolve_name`/`search` instead of re-researching.
 
-Run it in short steps (the five-call survival discipline in §4 "Long operations"): take in & scope the documents, work batches of requirements committing as you go, rebuild indexes, verify coverage by scanning the manifest for the run's saved notes, then write up. On a kill, never restart — scan `lib.manifest.all()` for the notes already saved under `curated:rfp/<run>/` and resume.
+Run it in short steps (the five-call survival discipline in §4 "Long operations"): take in & scope the documents, work batches of requirements committing as you go (search stays current — no rebuild step), verify coverage by scanning the manifest for the run's saved notes, then write up. On a kill, never restart — scan `lib.manifest.all()` for the notes already saved under `curated:rfp/<run>/` and resume.
 
 ### Drafting a presentation (on demand)
 

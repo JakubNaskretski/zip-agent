@@ -48,7 +48,7 @@ shared `librarian/` engine and is invoked by the prompt, never copied per profil
 
 - **Upgrade an existing agent's engine without losing its KB:**
   `scripts/upgrade_memory.py OLD_memory.zip NEW_code.zip -o upgraded.zip`
-  (carries `kb/**` + `manifest.json` + `dev/` forward; rebuild indexes on first boot).
+  (carries `kb/**` + `manifest.json` + `dev/` forward; the search index is built in memory at query time on this branch, so there is no first-boot rebuild step).
 - **Extract / back up an agent's KB:**
   `scripts/extract_kb.py DEPLOYED_memory.zip -o kb-bundle.zip`.
 
