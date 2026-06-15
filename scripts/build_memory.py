@@ -143,12 +143,46 @@ def _slim_language_pack(src, dest, keep="apex"):
     return src.stat().st_size / 1048576, dest.stat().st_size / 1048576
 
 
+# The shipped ``librarian/`` carries ONLY what the deployed agent uses at ingest —
+# the digest parsers + schema (+ the on-demand skills). The retired held-engine
+# modules (bootstrap, the transactional librarian, manifest, changelog, session,
+# index, retrieve, plan, rfp) do NOT ship: the lightweight ``runtime/`` package
+# replaced them, and boot/navigation never import ``librarian`` at all. A slim
+# package ``__init__`` keeps ``from librarian.digest import …`` working without
+# pulling the dropped modules. (The full package stays in the repo for the dev
+# suite + the build host.)
+_SHIPPED_LIBRARIAN_INIT = """'''librarian — shipped runtime subset (digest parsers + schema + skills).
+
+The transactional held-engine modules are intentionally NOT shipped — the
+lightweight runtime/ package replaced them. This is only what runtime/ingest
+imports when data is digested.
+'''
+from .schema import KnowledgeUnit, validate_ku, content_hash
+
+__all__ = ["KnowledgeUnit", "validate_ku", "content_hash"]
+"""
+
+
+def _stage_librarian(staging) -> None:
+    """Stage the slim shipped ``librarian/`` (schema + digest + skills + a minimal
+    ``__init__``) — not the retired held-engine modules."""
+    dst = staging / "librarian"
+    dst.mkdir(parents=True)
+    (dst / "__init__.py").write_text(_SHIPPED_LIBRARIAN_INIT, "utf-8")
+    shutil.copy2(REPO / "librarian" / "schema.py", dst / "schema.py")
+    shutil.copytree(REPO / "librarian" / "digest", dst / "digest", ignore=_IGNORE)
+    skills = REPO / "librarian" / "skills"
+    if skills.is_dir():
+        shutil.copytree(skills, dst / "skills", ignore=_IGNORE)
+
+
 def build(dest="memory.zip", seed_dir=None, wheelhouse=None, slim=True) -> Path:
     staging = Path(tempfile.mkdtemp()) / "mem"
     staging.mkdir(parents=True)
 
-    # the engine — travels inside the ZIP so the agent imports it after unpack
-    shutil.copytree(REPO / "librarian", staging / "librarian", ignore=_IGNORE)
+    # the engine subset that travels inside the ZIP (digest parsers + schema +
+    # skills only — the lean runtime/ replaced the held-engine modules)
+    _stage_librarian(staging)
 
     # the vendored Salesforce parsing engine — shipped at the ZIP root so the
     # digest adapter can `import graphbuilder` after unpack (bootstrap.boot() puts
@@ -325,81 +359,22 @@ def _extract_wheelhouse(zip_path, dest_dir):
 
 
 def upgrade_profile(profile, old_zip, out_dir=None, wheelhouse=None, slim=True):
-    """Upgrade a DEPLOYED, KB-loaded zip to the current engine AND regenerate the
-    profile's MASTER_PROMPT in one step — the move ``build_profile`` (clean zip,
-    no KB) and ``upgrade_memory`` (zip merge, no prompt) don't compose into.
+    """Upgrade a deployed agent's KB onto the CURRENT (lightweight) engine.
 
-    Builds a fresh clean code zip for ``profile`` (engine + seed), merges the OLD
-    zip's knowledge into it (the ``upgrade_memory`` logic, imported — not
-    duplicated), and writes ``<out_dir>/memory.zip`` (your KB on the new engine) +
-    ``MASTER_PROMPT.md`` beside it. The OLD zip's bundled **wheelhouse is carried
-    forward automatically** (verbatim) so the upgrade keeps whatever offline
-    capability it had — pptx render stack, Apex AST, PDF — without re-passing
-    ``--pptx``/``--ast`` (an explicit ``wheelhouse`` overrides). NEVER overwrites
-    the input: an existing
-    ``memory.zip`` at the target is moved to ``memory.prev.zip`` first, so an
-    in-place upgrade (``old_zip == <out_dir>/memory.zip``) keeps the original as
-    the backup. The search index (which ``upgrade_memory`` drops as rebuildable)
-    is rebuilt here in-process, so the result ships READY — no first-boot rebuild
-    and no shrunk-zip surprise. Returns
-    ``(out_dir, memzip, prompt_path, prompt_changed)``."""
-    import importlib.util
-
-    available = list_profiles()
-    if profile not in available:
-        raise SystemExit(f"unknown profile {profile!r}; available: "
-                         f"{', '.join(available) or '(none)'}")
-    old_zip = Path(old_zip)
-    if not old_zip.is_file():
-        raise SystemExit(f"--upgrade: OLD zip not found: {old_zip}")
-    out_dir = Path(out_dir) if out_dir else (REPO / "dist" / profile)
-    out_dir.mkdir(parents=True, exist_ok=True)
-    out_zip = out_dir / "memory.zip"
-
-    # the merge lives in the sibling script — load it, don't re-implement it
-    spec = importlib.util.spec_from_file_location(
-        "upgrade_memory", Path(__file__).resolve().parent / "upgrade_memory.py")
-    upgrade_memory = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(upgrade_memory)
-
-    seed = PROFILES_DIR / profile / "seed"
-    seed_dir = str(seed) if seed.is_dir() and any(seed.iterdir()) else None
-
-    with tempfile.TemporaryDirectory(prefix="upgrade_") as tmp:
-        # PRESERVE the old zip's bundled capability by default: an upgrade must
-        # not silently strip the offline wheelhouse (python-pptx/Pillow/lxml for
-        # the pptx render stack, tree-sitter for the Apex AST, pypdf for PDF) it
-        # already shipped. Carry those wheels verbatim (slim=False). An explicit
-        # --wheelhouse/--ast/--pptx (wheelhouse arg set) overrides to re-bundle.
-        if wheelhouse is None:
-            carried = _extract_wheelhouse(old_zip, Path(tmp) / "wh")
-            if carried:
-                wheelhouse, slim = str(carried), False
-                print(f"upgrade: carrying forward {len(list(carried.glob('*.whl')))} "
-                      "bundled wheel(s) from the old zip (preserving its capability)")
-            else:
-                print("upgrade: old zip bundled no wheelhouse — none carried")
-        fresh = build(Path(tmp) / "code.zip", seed_dir=seed_dir,
-                      wheelhouse=wheelhouse, slim=slim)
-        old_input = old_zip
-        if out_zip.exists():                       # never clobber: back up first
-            backup = out_dir / "memory.prev.zip"
-            shutil.move(str(out_zip), str(backup))
-            if old_zip.resolve() == out_zip.resolve():   # in-place: read the backup
-                old_input = backup
-        merged = Path(tmp) / "merged.zip"
-        upgrade_memory.upgrade(str(old_input), str(fresh), str(merged))
-        # The search index is built in memory at open time from the live KB
-        # (librarian/index.py MemIndex) — there is no persisted index to ship or
-        # rebuild. The upgraded zip is READY on first boot with no rebuild step.
-        shutil.move(str(merged), str(out_zip))
-
-    prompt_path = out_dir / "MASTER_PROMPT.md"
-    new_prompt = assemble_prompt(profile)
-    prompt_changed = (not prompt_path.is_file()
-                      or prompt_path.read_text("utf-8") != new_prompt)
-    prompt_path.write_text(new_prompt, "utf-8")
-    return out_dir, out_zip, prompt_path, prompt_changed
+    Upgrading and migrating are now the same operation — carry an existing zip's
+    knowledge onto a freshly built lean engine + regenerate the prompt — so this
+    is a thin alias for :func:`migrate_to_lean` (which accepts both old
+    Librarian-model zips and lean zips, carries the bundled wheelhouse forward,
+    and backs up any existing target). Returns
+    ``(out_dir, memzip, prompt_path, prompt_changed)`` for backward compatibility;
+    ``prompt_changed`` is whether the regenerated prompt differs from one already
+    beside the target."""
+    target = (Path(out_dir) if out_dir else (REPO / "dist" / profile)) / "MASTER_PROMPT.md"
+    prior = target.read_text("utf-8") if target.is_file() else None
+    out_dir, memzip, prompt_path, _counts = migrate_to_lean(
+        old_zip, profile, out_dir, wheelhouse, slim=slim)
+    changed = prior is None or prompt_path.read_text("utf-8") != prior
+    return out_dir, memzip, prompt_path, changed
 
 
 def _carry_kb(old_zip, ws) -> dict:
@@ -426,6 +401,12 @@ def _carry_kb(old_zip, ws) -> dict:
                 if len(parts) == 4 and parts[2] in _layout.SOURCES:
                     ws.write_bytes(_layout.graph_shard(parts[2]), z.read(n))
                     counts["graphs"] += 1
+                else:
+                    counts["skipped"] += 1
+            elif n.startswith("graph/") and n.endswith(".json"):
+                src = n[len("graph/"):-len(".json")]   # lean source zip: already a shard
+                if "/" not in src and src in _layout.SOURCES:
+                    ws.write_bytes(n, z.read(n)); counts["graphs"] += 1
                 else:
                     counts["skipped"] += 1
     return counts
@@ -578,8 +559,7 @@ if __name__ == "__main__":
             print(f"  memory.zip     {memzip}   (your KB carried onto the current engine)")
             print(f"  MASTER_PROMPT  {prompt_path}   "
                   f"({'CHANGED — re-paste it' if changed else 'unchanged'})")
-            print("ready to deploy: upload memory.zip as the agent's memory "
-                  "(its search index is already rebuilt — no first-boot step).")
+            print("ready to deploy: upload memory.zip (your KB on the lightweight engine).")
             if changed:
                 print("      then re-paste MASTER_PROMPT.md into the instructions field.")
         elif args.migrate:

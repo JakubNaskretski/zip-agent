@@ -5,10 +5,14 @@ import zipfile
 import pytest
 
 from librarian import boot
+from runtime import boot as lean_boot
+from runtime.ingest import digest_to_tree
+from runtime.storage import Workspace
 from scripts.build_memory import (
     list_profiles, assemble_prompt, build_profile, build, upgrade_profile)
 from scripts.extract_kb import extract
 from factories import jira_ku
+from tests.test_digest_graphbuilder import make_force_app
 
 
 def test_profiles_are_discovered_from_dir():
@@ -46,49 +50,39 @@ def test_build_profile_emits_clean_zip_and_prompt_beside_it(tmp_path):
     assert memzip.exists() and prompt_path.exists()
     with zipfile.ZipFile(memzip) as zf:
         names = zf.namelist()
-    assert any(n.startswith("librarian/") and n.endswith("librarian.py") for n in names)
-    assert any(n.startswith("graphbuilder/") for n in names)   # vendored engine shipped
-    assert "MASTER_PROMPT.md" not in names                     # prompt is BESIDE, not inside
+    assert any(n.startswith("runtime/") for n in names)            # the lean engine ships
+    assert "agent_manifest.json" in names and "index/L0.md" in names
+    assert any(n.startswith("graphbuilder/") for n in names)       # parser engine for ingest
+    assert "librarian/librarian.py" not in names                   # held engine NOT shipped
+    assert "MASTER_PROMPT.md" not in names                         # prompt is BESIDE, not inside
     assert "## 4.2 DISCOVER" in prompt_path.read_text("utf-8")
-    # the clean zip boots into a working session
-    session = boot(memzip, work_dir=tmp_path / "deployed")
-    session.begin("dev", "first ingest on the rfp agent").add_ku(jira_ku(1), body="x").commit()
-    assert session.get("jira:PROJ-1") is not None
+    # the clean zip boots via the lean runtime into an empty (no-KB) session
+    session = lean_boot(str(memzip), str(tmp_path / "deployed"))
+    assert session.sources() == [] and session.l0          # L0 map loaded, no KB yet
 
 
 def test_upgrade_profile_carries_kb_and_regenerates_prompt(tmp_path):
-    """One-shot upgrade of a deployed, KB-loaded zip: new engine + carried KB +
-    regenerated prompt, in place, without losing the original. Exercises the
-    hardest path — the KB zip IS <out_dir>/memory.zip."""
+    """Upgrade = carry a deployed agent's KB onto the current lean engine +
+    regenerate the prompt, backing up the previous zip (never clobbered)."""
+    # a deployed lean agent with real KB (a Salesforce digest)
+    make_force_app(tmp_path)
+    ws = Workspace(None, str(tmp_path / "work"))
+    digest_to_tree(ws, "salesforce", str(tmp_path / "force-app"))
+    deployed = ws.export(str(tmp_path / "deployed.zip"))
+
     out = tmp_path / "rfp"
-    build_profile("rfp", out_dir=out)                      # initial deploy (clean)
-    # operator ingests knowledge straight into the deployed zip
-    s = boot(out / "memory.zip", work_dir=tmp_path / "w")
-    s.begin("dev", "ingest a project issue into the deployed agent").add_ku(
-        jira_ku(99), body="acme order export bug").commit()
-    assert s.get("jira:PROJ-99") is not None
-    # an older prompt sits beside it; pretend it's stale so we can see the regen
+    out.mkdir()
+    (out / "memory.zip").write_bytes(b"PK\x03\x04 prior zip")       # something to back up
     (out / "MASTER_PROMPT.md").write_text("STALE PROMPT", "utf-8")
 
-    out_dir, memzip, prompt_path, changed = upgrade_profile("rfp", out / "memory.zip", out_dir=out)
+    out_dir, memzip, prompt_path, changed = upgrade_profile("rfp", str(deployed), out_dir=out)
 
-    # On this branch the search index lives in memory and is built at open time
-    # from the live KB — there is NO persisted index to ship, so the upgraded zip
-    # carries none.
-    with zipfile.ZipFile(memzip) as zf:
-        assert not any(n.startswith("kb/indexes/") for n in zf.namelist()), \
-            "no persisted index ships — search is built in memory at open time"
-    # KB carried onto the rebuilt engine, and search is live immediately (no
-    # rebuild step needed — open_index builds the MemIndex from the live files)
-    s2 = boot(memzip, work_dir=tmp_path / "w2")
-    assert s2.get("jira:PROJ-99") is not None
-    from librarian import retrieve
-    con = retrieve.open_index(s2.librarian)
-    assert "jira:PROJ-99" in {h["ku_id"] for h in retrieve.find_entity(con, "MeterPointService")}
-    # the original KB zip is preserved as the backup (never clobbered)
+    # KB carried onto the rebuilt lean engine
+    s2 = lean_boot(str(memzip), str(tmp_path / "w2"))
+    assert "salesforce" in s2.sources()
+    assert any(n["id"] == "object/MeterPoint__c" for n in s2.shard("salesforce")["nodes"])
+    # the previous zip is preserved as the backup (never clobbered)
     assert (out / "memory.prev.zip").exists()
-    s_prev = boot(out / "memory.prev.zip", work_dir=tmp_path / "wp")
-    assert s_prev.get("jira:PROJ-99") is not None
     # prompt regenerated to the real contract, drift reported
     assert changed is True
     text = prompt_path.read_text("utf-8")
@@ -104,24 +98,20 @@ def test_upgrade_carries_forward_the_bundled_wheelhouse(tmp_path):
     init = build(tmp_path / "init.zip", wheelhouse=str(wh), slim=False)
     with zipfile.ZipFile(init) as zf:
         assert "reference/wheelhouse/acme_dep-1.0-py3-none-any.whl" in zf.namelist()
-    s = boot(init, work_dir=tmp_path / "w")
-    s.begin("dev", "ingest one issue before upgrade").add_ku(jira_ku(7), body="x").commit()
 
     out = tmp_path / "rfp"
     _, memzip, _, _ = upgrade_profile("rfp", init, out_dir=out)   # NO wheel flags
 
     with zipfile.ZipFile(memzip) as zf:
-        names = zf.namelist()
-    assert "reference/wheelhouse/acme_dep-1.0-py3-none-any.whl" in names, \
-        "the upgrade must carry the old zip's wheelhouse forward, not strip it"
-    assert boot(memzip, work_dir=tmp_path / "w2").get("jira:PROJ-7") is not None  # KB too
+        assert "reference/wheelhouse/acme_dep-1.0-py3-none-any.whl" in zf.namelist(), \
+            "the upgrade must carry the old zip's wheelhouse forward, not strip it"
 
 
 def test_upgrade_profile_requires_a_known_profile(tmp_path):
-    memzip = tmp_path / "memory.zip"
-    boot(memzip, work_dir=tmp_path / "w")
-    with pytest.raises(SystemExit):
-        upgrade_profile("does-not-exist", memzip, out_dir=tmp_path / "o")
+    fake = tmp_path / "any.zip"
+    fake.write_bytes(b"PK\x03\x04")
+    with pytest.raises(SystemExit):                          # profile checked before the zip
+        upgrade_profile("does-not-exist", fake, out_dir=tmp_path / "o")
 
 
 def test_extract_kb_roundtrips_and_never_touches_input(tmp_path):

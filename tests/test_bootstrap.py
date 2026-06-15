@@ -77,25 +77,6 @@ def test_export_is_independent_of_autosave(tmp_path):
     assert out.exists() and out != memzip
 
 
-def test_deployable_zip_carries_engine_and_boots(tmp_path):
-    """The build helper produces a ZIP that contains the librarian engine and
-    boots into a working session. The master prompt is deliberately NOT bundled
-    (it's pasted into the agent builder's instructions field)."""
-    from scripts.build_memory import build
-
-    memzip = build(tmp_path / "memory.zip")
-    import zipfile
-    with zipfile.ZipFile(memzip) as zf:
-        names = zf.namelist()
-    assert any(n.startswith("librarian/") and n.endswith("librarian.py") for n in names)
-    assert "MASTER_PROMPT.md" not in names and "AGENT.md" not in names
-
-    session = boot(memzip, work_dir=tmp_path / "deployed")
-    session.begin("dev", "first ingest on the deployed artifact").add_ku(jira_ku(7), body="z").commit()
-    assert session.get("jira:PROJ-7") is not None
-    # the unpacked engine is importable from inside the ZIP
-    assert str(tmp_path / "deployed") in sys.path
-
 
 def test_build_bundles_wheelhouse(tmp_path):
     """--wheelhouse packs *.whl into reference/wheelhouse/ (where boot()'s
