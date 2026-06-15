@@ -111,8 +111,8 @@ What the Librarian guarantees (so you don't have to police it yourself): one man
 
   Pass `progress=print` on any big digest (it prints a one-line count every 1000 files/KUs plus a compact final line, so a killed call shows where it stopped — see "Long operations" below); the Mule corpus is small enough not to need it.
 
-  Re-ingesting unchanged content is a no-op (the report shows new/changed/unchanged). Absence in a scoped re-ingest is **not** deletion — flag it, never auto-retire. Surface `unresolved`/`errors`/`skipped` from the digest, never swallow them. **After a digest, run `rebuild_indexes(lib, author, "rebuild indexes after <source> digest")`** (`from librarian import rebuild_indexes`) so search reflects the new data. Jira/Confluence raw KUs hold each issue/page dump verbatim (`lib.read_body("jira:<PROJ>/<KEY>")` is the full detail); their `entities` carry structured ids only (issue key / space key + page id) — never extract prose names into the bridge. Office documents get THREE artifacts each: the raw KU `docs:<path>` holding a media-stripped working copy (images/embedded media removed; every XML part kept — re-open/re-parse text, tables and chart data on demand), a plain-text sidecar `docs:<path>#text` that FTS indexes (Word: section titles + text; Excel: sheet/table/column names; PowerPoint: slide titles + body text + speaker notes + chart series/category labels), and the contained `docs:graph/docs` structure graph; their `entities` are ALWAYS empty — filenames, titles, headings and column names never enter the bridge. `parse_office`/`ingest_office` accept **either a directory of documents or a single document path** (a lone `.docx`/`.pptx`/… works — it need not sit inside a folder), so point the same call at one file or many.
-- **GROW** — author a curated KU (glossary term, cross-source mapping, decision, lesson) when you've confirmed something worth keeping. Always link it `derived-from` the raw KUs it rests on; if those later change, the Librarian flags your note `needs-review`. To teach the alias index new terms — common abbreviations, Polish vocabulary, or domain synonyms — author a glossary KU: id `curated:glossary/<slug>`, `entities` = the canonical name(s) exactly as they appear in the entity bridge, body = one alias per line (`#` lines are comments). After the next `rebuild_indexes`, every body line resolves to its canonicals via `retrieve.resolve_name`. The shape that validates:
+  Re-ingesting unchanged content is a no-op (the report shows new/changed/unchanged). Absence in a scoped re-ingest is **not** deletion — flag it, never auto-retire. Surface `unresolved`/`errors`/`skipped` from the digest, never swallow them. **Search is always current** — the index is built in memory from the live KB at query time (`retrieve.open_index`), so after a digest it already reflects the new data with no extra step. (`rebuild_indexes(lib, author, …)` is a no-op kept only for backward compatibility; calling it is harmless but unnecessary.) Jira/Confluence raw KUs hold each issue/page dump verbatim (`lib.read_body("jira:<PROJ>/<KEY>")` is the full detail); their `entities` carry structured ids only (issue key / space key + page id) — never extract prose names into the bridge. Office documents get THREE artifacts each: the raw KU `docs:<path>` holding a media-stripped working copy (images/embedded media removed; every XML part kept — re-open/re-parse text, tables and chart data on demand), a plain-text sidecar `docs:<path>#text` that FTS indexes (Word: section titles + text; Excel: sheet/table/column names; PowerPoint: slide titles + body text + speaker notes + chart series/category labels), and the contained `docs:graph/docs` structure graph; their `entities` are ALWAYS empty — filenames, titles, headings and column names never enter the bridge. `parse_office`/`ingest_office` accept **either a directory of documents or a single document path** (a lone `.docx`/`.pptx`/… works — it need not sit inside a folder), so point the same call at one file or many.
+- **GROW** — author a curated KU (glossary term, cross-source mapping, decision, lesson) when you've confirmed something worth keeping. Always link it `derived-from` the raw KUs it rests on; if those later change, the Librarian flags your note `needs-review`. To teach the alias index new terms — common abbreviations, Polish vocabulary, or domain synonyms — author a glossary KU: id `curated:glossary/<slug>`, `entities` = the canonical name(s) exactly as they appear in the entity bridge, body = one alias per line (`#` lines are comments). Once committed, the next `retrieve.open_index` (built fresh from the live KB) resolves every body line to its canonicals via `retrieve.resolve_name` — no rebuild step needed. The shape that validates:
 
   ```python
   from librarian import KnowledgeUnit
@@ -150,13 +150,7 @@ rep, dg = sf.ingest_salesforce(lib, force_app_dir, author, rationale,
 print(rep)   # capped Report repr — trust the counts
 ```
 
-**Step 3 — REBUILD INDEXES** (its own call):
-```python
-from librarian import rebuild_indexes
-rep = rebuild_indexes(lib, author, "rebuild indexes after <source> digest",
-                      progress=print)
-print(rep)
-```
+**Step 3 — (no index rebuild needed)**: the search index is built in memory from the live KB at query time (`retrieve.open_index`), so it already reflects what you just committed — there is nothing to rebuild. (`rebuild_indexes(lib, author, …)` still exists as a no-op for backward compatibility; you may skip it entirely.)
 
 **Step 4 — VERIFY**:
 ```python
@@ -276,7 +270,7 @@ Data Center, Bearer PAT):
    `jira-dump/<PROJECT>/<KEY>.issue.json`. Collection is incremental; a dump dir
    holding a `.incomplete` sentinel aborted mid-listing — treat it as partial.
 3. They zip the dumps and upload. Digest them like any other source (§4
-   DIGEST): preview → confirm → ingest → rebuild indexes:
+   DIGEST): preview → confirm → ingest (search updates itself — no rebuild step):
 
    ```python
    from librarian.digest import jira, confluence
@@ -285,7 +279,7 @@ Data Center, Bearer PAT):
    # on the user's go-ahead:
    rep, jd = jira.ingest_jira(lib, jira_dump_dir, author, rationale)
    rep, cd = confluence.ingest_confluence(lib, conf_dump_dir, author, rationale)
-   rebuild_indexes(lib, author, "rebuild indexes after jira/confluence digest")
+   # no rebuild step: search is built in memory at query time (retrieve.open_index)
    ```
 
 ---
@@ -304,14 +298,14 @@ MANIFEST  lib.manifest.get(id) → one KU; .all() / .entries → every KU; .stat
 DIGEST    sf.digest()/mule.parse_mule()/jira.parse_jira()/confluence.parse_confluence()/
           office.parse_office() preview → confirm → sf.ingest_salesforce()/mule.ingest_mule()/
           jira.ingest_jira()/confluence.ingest_confluence()/office.ingest_office()
-          → rebuild_indexes(lib, author, why)
+          (search updates itself — built in memory at query time; no rebuild step)
           (jira/confluence dumps come from the §7 collectors; office = .docx/.xlsx/.xlsm/.pptx/.pptm uploads)
 DOCS      media-stripped working copy: lib.read_body("docs:<path>") · searchable text: docs:<path>#text (FTS)
           · structure: office.load_graph(lib) · entities ALWAYS empty (prose never bridged)
 GROW      lib.begin(author, why).add_ku(KnowledgeUnit(id="curated:…", kind="curated-note",
           tier="curated", source="agent", path="kb/curated/…", links=[derived-from…]), body=…).commit()
 REORG     plan → preview (before/after) → confirm → commit
-LONG OPS  five-call protocol (§4 "Long operations"): 1-PARSE+PREVIEW 2-INGEST 3-REBUILD 4-VERIFY 5-EXPORT
+LONG OPS  five-call protocol (§4 "Long operations"): 1-PARSE+PREVIEW 2-INGEST 3-(no rebuild) 4-VERIFY 5-EXPORT
           · each step one execution · progress=print · dead call: stats() then resume · never restart
 SAFETY    sources are READ-ONLY; never hand-edit KB/manifest/index; rationale = a real sentence
 PERSIST   commits auto-checkpoint into memory.zip (host retains it). EXPORT on request = regenerate a NEW versioned file (memory_v2.zip, _v3…), NEVER overwrite the live zip

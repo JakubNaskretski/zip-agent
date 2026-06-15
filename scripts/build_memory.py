@@ -365,16 +365,9 @@ def upgrade_profile(profile, old_zip, out_dir=None, wheelhouse=None, slim=True):
                 old_input = backup
         merged = Path(tmp) / "merged.zip"
         upgrade_memory.upgrade(str(old_input), str(fresh), str(merged))
-        # rebuild the search index NOW (upgrade_memory drops it as rebuildable) so
-        # the shipped zip is READY — no first-boot rebuild step, no size surprise.
-        # Indexing is pure-python + stdlib sqlite, so boot WITHOUT installing the
-        # wheelhouse (its wheels target the SANDBOX platform, not this build host).
-        from librarian import boot as _boot, rebuild_indexes as _rebuild_indexes
-        session = _boot(merged, work_dir=Path(tmp) / "boot",
-                        install_wheelhouse=False, autosave=False)
-        _rebuild_indexes(session.librarian, "upgrade",
-                         "rebuild search index after engine upgrade")
-        session.checkpoint()                       # pack the fresh index into the zip
+        # The search index is built in memory at open time from the live KB
+        # (librarian/index.py MemIndex) — there is no persisted index to ship or
+        # rebuild. The upgraded zip is READY on first boot with no rebuild step.
         shutil.move(str(merged), str(out_zip))
 
     prompt_path = out_dir / "MASTER_PROMPT.md"

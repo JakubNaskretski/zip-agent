@@ -1,6 +1,4 @@
 """Search index (entity bridge + FTS) and the retrieve primitives."""
-import pytest
-
 from librarian import Librarian, Store, KnowledgeUnit, rebuild_indexes, retrieve
 
 
@@ -27,13 +25,12 @@ def seed(tmp_path):
     return lib
 
 
-def test_open_index_error_teaches_the_real_import(tmp_path):
-    """The message is copy-pasteable by a host that knows nothing else — it must
-    name the actual import, not a path that only works mid-session."""
+def test_open_index_builds_from_live_files_without_rebuild(tmp_path):
+    """open_index no longer needs a persisted index: it builds the MemIndex
+    from the live KB, so a seeded-but-never-rebuilt lib resolves immediately."""
     lib = seed(tmp_path)                       # seeded, but never indexed
-    with pytest.raises(LookupError) as e:
-        retrieve.open_index(lib)
-    assert "from librarian import rebuild_indexes" in str(e.value)
+    con = retrieve.open_index(lib)             # builds in memory — never raises
+    assert retrieve.find_entity(con, "MeterPointService")
 
 
 def test_entity_bridge_joins_across_sources(tmp_path):
@@ -77,13 +74,15 @@ def test_fts_search_ranks_and_snippets(tmp_path):
     assert all(r["source"] == "salesforce" for r in only_sf)
 
 
-def test_rebuild_is_idempotent(tmp_path):
+def test_rebuild_is_a_noop(tmp_path):
+    """rebuild_indexes is now a no-op kept for compatibility: it returns an ok
+    Report and never bumps the manifest generation (search is built fresh at
+    open_index from the live files)."""
     lib = seed(tmp_path)
-    rebuild_indexes(lib, "dev", "build index")
     gen = lib.manifest.generation
-    rep = rebuild_indexes(lib, "dev", "rebuild unchanged index")
-    assert rep.unchanged == ["agent:index/search"]
-    assert lib.manifest.generation == gen                # no churn when KB unchanged
+    rep = rebuild_indexes(lib, "dev", "rebuild — now a no-op")
+    assert rep.ok
+    assert lib.manifest.generation == gen                # no churn — nothing persisted
 
 
 def test_index_updates_after_new_ku(tmp_path):

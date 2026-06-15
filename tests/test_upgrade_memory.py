@@ -20,14 +20,18 @@ def _sha(path):
 
 
 def _build_old(tmp_path):
-    """A deployed memory.zip: a few KUs (one curated), a built index, old code."""
+    """A deployed memory.zip: a few KUs (one curated) and old code.
+
+    No persisted index: on this branch the search index is built in memory at
+    open time (rebuild_indexes is a no-op kept for compatibility), so the old
+    zip never carries a kb/indexes/ blob."""
     work = tmp_path / "old_work"
     lib = Librarian(Store(work))
     lib.begin("dev", "seed knowledge for the upgrade test") \
         .add_ku(jira_ku(1), body="issue one body") \
         .add_ku(jira_ku(2), body="issue two body") \
         .add_ku(curated_ku(derived_from="jira:PROJ-1"), body="curated note").commit()
-    rebuild_indexes(lib, "dev", "build the search index")
+    rebuild_indexes(lib, "dev", "no-op rebuild (index is in memory)")   # no-op
     (work / "librarian").mkdir(exist_ok=True)
     (work / "librarian" / "OLD_CODE_MARKER.py").write_text("OLD = 1")
     return pack_zip(work, tmp_path / "old_memory.zip")
@@ -64,12 +68,14 @@ def test_state_from_old_code_from_new_indexes_dropped(tmp_path, capsys):
         manifest = json.loads(zf.read("manifest.json"))
         changelog = json.loads(zf.read("dev/changelog.json"))
 
-    # STATE survived: every KB tier, manifest, changelog, session state
+    # STATE survived: every KB tier, manifest, changelog, session state.
+    # The seed commit is the only changelog entry — rebuild_indexes is a no-op
+    # now, so it adds neither an entry nor a generation bump.
     assert "kb/raw/jira/PROJ-1.json" in names
     assert "kb/raw/jira/PROJ-2.json" in names
     assert "kb/curated/mappings/meter-map.md" in names
     assert "dev/session_state.json" in names
-    assert len(changelog["entries"]) == 2          # history carried verbatim
+    assert len(changelog["entries"]) == 1          # history carried verbatim
 
     # CODE swapped: new engine in, old engine out, assets bundled
     assert "librarian/NEW_CODE_MARKER.py" in names
@@ -77,11 +83,11 @@ def test_state_from_old_code_from_new_indexes_dropped(tmp_path, capsys):
     assert "graphbuilder/core.py" in names
     assert "reference/wheelhouse/pkg-1.0-py3-none-any.whl" in names
 
-    # DERIVED indexes dropped (I13): file gone, manifest entry gone
+    # No persisted index ever existed (built in memory now); none in the upgrade.
     assert not any(n.startswith("kb/indexes/") for n in names)
     ids = {r["id"] for r in manifest["resources"]}
     assert ids == {"jira:PROJ-1", "jira:PROJ-2", "curated:mappings/meter-map"}
-    assert manifest["generation"] == 2             # rest of the manifest verbatim
+    assert manifest["generation"] == 1             # rest of the manifest verbatim
 
     # NEW zip's stray state was ignored, not merged
     assert "kb/raw/leak.txt" not in names
@@ -89,11 +95,12 @@ def test_state_from_old_code_from_new_indexes_dropped(tmp_path, capsys):
     # inputs untouched
     assert _sha(old) == old_sha and _sha(new) == new_sha
 
-    # the loud rebuild reminder is printed
-    assert "rebuild_indexes" in capsys.readouterr().out
+    # the upgrade note explains the index is built in memory at open time
+    out_text = capsys.readouterr().out
+    assert "open_index" in out_text and "in memory" in out_text
 
 
-def test_upgraded_zip_boots_and_indexes_rebuild(tmp_path):
+def test_upgraded_zip_boots_and_search_is_live_at_open(tmp_path):
     out = upgrade(_build_old(tmp_path), _build_new(tmp_path), tmp_path / "up.zip")
     session = boot(out, work_dir=tmp_path / "deployed",
                    install_wheelhouse=False, autosave=False)
@@ -101,9 +108,8 @@ def test_upgraded_zip_boots_and_indexes_rebuild(tmp_path):
     assert lib.get("curated:mappings/meter-map") is not None
     assert lib.read_body("jira:PROJ-1") == b"issue one body"
 
-    with pytest.raises(LookupError):               # no index until rebuilt
-        retrieve.open_index(lib)
-    rebuild_indexes(lib, "dev", "rebuild indexes after engine upgrade")
+    # search is live immediately — open_index builds the MemIndex from the live
+    # KB; no rebuild step (and no persisted index) is needed
     con = retrieve.open_index(lib)
     assert retrieve.find_entity(con, "MeterPointService")
 

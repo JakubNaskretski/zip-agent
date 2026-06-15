@@ -7,36 +7,44 @@ The agent composes these with the source-specific graph queries (e.g. Salesforce
   - **FTS** = keyword / prose search.
 
 Usage:
-    from librarian import retrieve, index
-    index.rebuild_indexes(lib, "dev", "build the search index")   # after a digest
-    con = retrieve.open_index(lib)
+    from librarian import retrieve
+    con = retrieve.open_index(lib)                  # built fresh from the live KB
     retrieve.find_entity(con, "AccountUpdater")     # -> KUs mentioning it (any source)
     retrieve.cross_source(con, "MeterPointService") # -> {source: [ku_id, ...]}
     retrieve.search(con, "bulk import retry", lib=lib)  # ranked KUs w/ snippets
+
+The index (a :class:`~librarian.index.MemIndex`) is assembled in memory from the
+live files on every ``open_index`` call, so it is always current — no rebuild or
+persistence step is needed.
 """
 from __future__ import annotations
 
+import math
 import re
 
-from .index import INDEX_ID, load_sqlite
+from .index import _toks, build_index
 
 
 def open_index(lib):
-    """Load the serialized search index into an in-memory connection."""
-    body = lib.read_body(INDEX_ID)
-    if body is None:
-        raise LookupError(
-            "no search index yet — run: from librarian import rebuild_indexes; "
-            "rebuild_indexes(lib, author, rationale)")
-    return load_sqlite(body)
+    """Build the in-memory search index from the live KB and return it.
+
+    Always succeeds (no persisted index to be missing): the :class:`MemIndex`
+    is assembled fresh from the manifest + kb/ files, so it reflects the current
+    state of the knowledge base on every call."""
+    return build_index(lib)
 
 
 def find_entity(con, name) -> list:
     """Every KU whose `entities` includes `name` (case-insensitive, any source)."""
-    rows = con.execute(
-        "SELECT DISTINCT ku_id, source, kind FROM entities WHERE name_norm=? ORDER BY ku_id",
-        (name.lower(),)).fetchall()
-    return [{"ku_id": r[0], "source": r[1], "kind": r[2]} for r in rows]
+    target = name.lower()
+    seen: set = set()
+    out: list = []
+    for (_n, name_norm, ku_id, source, kind) in con.entities:
+        if name_norm == target and ku_id not in seen:
+            seen.add(ku_id)
+            out.append({"ku_id": ku_id, "source": source, "kind": kind})
+    out.sort(key=lambda r: r["ku_id"])
+    return out
 
 
 def cross_source(con, name) -> dict:
@@ -49,10 +57,10 @@ def cross_source(con, name) -> dict:
 
 def entity_like(con, prefix, limit=20) -> list:
     """Entity names starting with `prefix` — for autocomplete / disambiguation."""
-    rows = con.execute(
-        "SELECT DISTINCT name FROM entities WHERE name_norm LIKE ? ORDER BY name LIMIT ?",
-        (prefix.lower() + "%", limit)).fetchall()
-    return [r[0] for r in rows]
+    pre = prefix.lower()
+    names = {name for (name, name_norm, _id, _s, _k) in con.entities
+             if name_norm.startswith(pre)}
+    return sorted(names)[:limit]
 
 
 _TOK = re.compile(r"\w+", re.UNICODE)
@@ -191,45 +199,42 @@ def resolve_name(con, text, limit=10) -> list:
 
     _VIA_RANK = {"exact": 0, "curated": 1, "label": 2, "mech": 3}
 
+    # Build the lookup tables from the entity bridge.
+    ku_by_name: dict = {}        # name -> set(ku_id)
+    norm_to_names: dict = {}     # name_norm -> set(name)
+    for (name, name_norm, ku_id, _src, _kind) in con.entities:
+        ku_by_name.setdefault(name, set()).add(ku_id)
+        norm_to_names.setdefault(name_norm, set()).add(name)
+
     # Gather candidates: name → (ku_count, best_via)
     candidates: dict = {}
 
     # (a) exact entities.name_norm match
-    rows = con.execute(
-        "SELECT name, COUNT(DISTINCT ku_id) AS n FROM entities WHERE name_norm=? "
-        "GROUP BY name",
-        (q,),
-    ).fetchall()
-    for name, n in rows:
+    for name in norm_to_names.get(q, set()):
+        n = len(ku_by_name.get(name, set()))
         best = candidates.get(name)
         if best is None or _VIA_RANK["exact"] < _VIA_RANK[best[1]]:
             candidates[name] = (n, "exact")
 
-    # (b) alias match → join back to entities
-    rows = con.execute(
-        "SELECT e.name, COUNT(DISTINCT e.ku_id) AS n, a.via "
-        "FROM aliases a JOIN entities e ON e.name = a.canonical "
-        "WHERE a.alias=? "
-        "GROUP BY e.name, a.via",
-        (q,),
-    ).fetchall()
-    for name, n, via in rows:
+    # (b) alias match → join back to entities (alias == q AND canonical in bridge)
+    for (alias, canonical, via) in con.aliases:
+        if alias != q or canonical not in ku_by_name:
+            continue
+        name = canonical
+        n = len(ku_by_name[name])
         best = candidates.get(name)
         if best is None or _VIA_RANK.get(via, 99) < _VIA_RANK[best[1]]:
-            # preserve the highest ku count seen for this canonical
-            existing_n = candidates[name][0] if best else 0
+            existing_n = best[0] if best else 0
             candidates[name] = (max(n, existing_n), via)
-        elif best is not None:
-            # same or worse via — keep count updated
+        else:
+            # same or worse via — keep the higher ku count, retain best via
             candidates[name] = (max(n, best[0]), best[1])
 
-    # Also handle curated aliases whose canonical is NOT in entities (glossary tier)
-    # — fetch just from aliases table without the entities join.
-    # We want to surface these too; ku count = 0 (no entity bridge hits).
-    rows_curated = con.execute(
-        "SELECT canonical, via FROM aliases WHERE alias=?", (q,)
-    ).fetchall()
-    for canonical, via in rows_curated:
+    # (c) curated/glossary aliases whose canonical is NOT already a candidate
+    # (e.g. a glossary canonical with no entity-bridge hit) — surface at ku count 0.
+    for (alias, canonical, via) in con.aliases:
+        if alias != q:
+            continue
         if canonical not in candidates:
             candidates[canonical] = (0, via)
 
@@ -250,23 +255,48 @@ def resolve_name(con, text, limit=10) -> list:
 def search(con, text, k=10, source=None, lib=None) -> list:
     """Full-text search over KU title/entities/body, ranked by BM25.
 
+    OR-semantics over the query tokens (a doc matches if it contains ANY token),
+    scored with Okapi BM25 (k1=1.2, b=0.75) over the in-memory inverted index.
+    Higher ``score`` = more relevant.
+
     Pass ``lib`` to get match-positioned ``snippet`` strings (read from the KU
-    bodies on demand); without it, results carry titles only — the index is
-    contentless and stores no text to quote."""
-    q = _fts_query(text)
-    if not q:
+    bodies on demand); without it, results carry titles only — the index stores
+    no body text to quote."""
+    qtoks = _toks(text)
+    if not qtoks:
         return []
-    sql = ("SELECT m.ku_id, m.source, m.title, m.path, bm25(docs) "
-           "FROM docs JOIN docmap m ON m.rowid = docs.rowid WHERE docs MATCH ?")
-    args = [q]
-    if source:
-        sql += " AND m.source = ?"
-        args.append(source)
-    sql += " ORDER BY bm25(docs) LIMIT ?"
-    args.append(k)
-    rows = con.execute(sql, args).fetchall()
+
+    k1, b = 1.2, 0.75
+    N = con.N
+    avgdl = con.avgdl or 1
+
+    # candidate docs = union of postings for the query tokens
+    candidates: set = set()
+    for t in qtoks:
+        candidates.update(con.postings.get(t, ()))
+    if not candidates:
+        return []
+
+    scored: list = []
+    for idx in candidates:
+        doc = con.docs[idx]
+        if source and doc["source"] != source:
+            continue
+        tf, dl = doc["tf"], doc["dl"]
+        score = 0.0
+        for t in qtoks:
+            f = tf.get(t, 0)
+            if not f:
+                continue
+            df = con.df.get(t, 0)
+            idf = math.log(1 + (N - df + 0.5) / (df + 0.5))
+            score += idf * (f * (k1 + 1)) / (f + k1 * (1 - b + b * dl / avgdl))
+        if score > 0:
+            scored.append((score, doc))
+
+    scored.sort(key=lambda sd: (-sd[0], sd[1]["ku_id"]))
     terms = _TOK.findall(text or "")
-    return [{"ku_id": r[0], "source": r[1], "title": r[2],
-             "snippet": _excerpt(lib, r[3], terms) if lib is not None else "",
-             "score": r[4]}
-            for r in rows]
+    return [{"ku_id": doc["ku_id"], "source": doc["source"], "title": doc["title"],
+             "snippet": _excerpt(lib, doc["path"], terms) if lib is not None else "",
+             "score": score}
+            for (score, doc) in scored[:k]]

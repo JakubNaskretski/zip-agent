@@ -72,13 +72,14 @@ def test_upgrade_profile_carries_kb_and_regenerates_prompt(tmp_path):
 
     out_dir, memzip, prompt_path, changed = upgrade_profile("rfp", out / "memory.zip", out_dir=out)
 
-    # the upgrade ships a REBUILT search index (not left for first boot): the
-    # initial deploy never ran rebuild_indexes, so an index in the upgraded zip
-    # can only have come from the upgrade itself
+    # On this branch the search index lives in memory and is built at open time
+    # from the live KB — there is NO persisted index to ship, so the upgraded zip
+    # carries none.
     with zipfile.ZipFile(memzip) as zf:
-        assert any(n.startswith("kb/indexes/") for n in zf.namelist()), \
-            "upgrade must ship a rebuilt search index, not a stripped one"
-    # KB carried onto the rebuilt engine, and the shipped index is live
+        assert not any(n.startswith("kb/indexes/") for n in zf.namelist()), \
+            "no persisted index ships — search is built in memory at open time"
+    # KB carried onto the rebuilt engine, and search is live immediately (no
+    # rebuild step needed — open_index builds the MemIndex from the live files)
     s2 = boot(memzip, work_dir=tmp_path / "w2")
     assert s2.get("jira:PROJ-99") is not None
     from librarian import retrieve
@@ -146,26 +147,36 @@ def test_extract_refuses_code_only_zip(tmp_path):
         extract(code_only, out=tmp_path / "out.zip")
 
 
-def test_extract_kb_index_drop_and_with_indexes(tmp_path):
+def test_extract_kb_has_no_persisted_index_tier(tmp_path):
+    """On this branch the search index is built in memory at open time — there is
+    NO persisted index KU. rebuild_indexes is a no-op, so a checkpointed zip ships
+    no kb/indexes/ files and no indexes-tier manifest entry, and extract carries
+    the real KB cleanly. (The extract --with-indexes path remains for legacy zips
+    that may still carry a kb/indexes/ blob; with none present it simply has
+    nothing extra to keep.)"""
     from librarian import rebuild_indexes
     memzip = tmp_path / "memory.zip"
     s = boot(memzip, work_dir=tmp_path / "w")
-    s.begin("dev", "ingest one issue for the index").add_ku(jira_ku(1), body="a").commit()
-    rebuild_indexes(s.librarian, "dev", "build the search index for the test")
-    s.checkpoint()                                   # pack the index into memory.zip
+    s.begin("dev", "ingest one issue").add_ku(jira_ku(1), body="a").commit()
+    rebuild_indexes(s.librarian, "dev", "no-op rebuild (index is in memory now)")
+    s.checkpoint()
     import json as _json
-    # default: index FILES dropped AND their manifest entries removed (no dangling ref)
+    # no persisted index: no kb/indexes/ files anywhere in the zip
+    with zipfile.ZipFile(memzip) as zf:
+        assert not any(n.startswith("kb/indexes/") for n in zf.namelist())
+    # extract carries the real KB and never produces an indexes tier
     bundle = extract(memzip, out=tmp_path / "kb.zip")
     with zipfile.ZipFile(bundle) as zf:
         names = zf.namelist()
         manifest = _json.loads(zf.read("manifest.json"))
+    assert "kb/raw/jira/PROJ-1.json" in names
     assert not any(n.startswith("kb/indexes/") for n in names)
     res = manifest.get("resources", manifest.get("kus", []))
     assert not any(r.get("tier") == "indexes" for r in res)
-    # --with-indexes keeps the files
+    # --with-indexes is still accepted and round-trips the same KB (nothing to keep)
     bundle2 = extract(memzip, out=tmp_path / "kb2.zip", with_indexes=True)
     with zipfile.ZipFile(bundle2) as zf:
-        assert any(n.startswith("kb/indexes/") for n in zf.namelist())
+        assert not any(n.startswith("kb/indexes/") for n in zf.namelist())
 
 
 def test_ast_unknown_target_is_rejected():

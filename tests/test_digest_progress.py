@@ -9,6 +9,7 @@ Also covers:
 import pytest
 
 from librarian import Librarian, Store, rebuild_indexes
+from librarian.index import build_index
 from librarian.digest import _progress, graphbuilder as sf, jira, confluence, office
 
 from test_digest_graphbuilder import make_force_app
@@ -178,18 +179,19 @@ def test_sf_ingest_with_precomputed_dg_skips_reparse(tmp_path, monkeypatch):
 
 
 # --------------------------------------------------------------------------- #
-# rebuild_indexes progress narration
+# index-build progress narration
 # --------------------------------------------------------------------------- #
-def test_rebuild_indexes_progress_emits_final_line(tmp_path, monkeypatch):
-    """rebuild_indexes(progress=) emits a compact final line after indexing."""
-    from librarian.digest._progress import EVERY as _EVERY
+# The search index is now built in memory at open time (build_index), where the
+# progress narration lives; rebuild_indexes is a no-op kept for compatibility.
+def test_build_index_progress_emits_final_line(tmp_path, monkeypatch):
+    """build_index(progress=) emits a compact final line after indexing."""
     lib = Librarian(Store(tmp_path / "mem"))
     # ingest a few KUs so the loop has something to iterate
     dump = make_jira_dump(tmp_path)
     jira.ingest_jira(lib, dump, "dev", "ingest sample Jira dump")
 
     lines: list = []
-    rebuild_indexes(lib, "dev", "rebuild indexes", progress=lines.append)
+    build_index(lib, progress=lines.append)
     assert lines, "progress produced no output"
     # there should be at least one line containing "index rebuild"
     assert any("index rebuild" in ln for ln in lines)
@@ -199,11 +201,23 @@ def test_rebuild_indexes_progress_emits_final_line(tmp_path, monkeypatch):
     assert lines[-1].endswith("indexed")
 
 
-def test_rebuild_indexes_progress_none_is_silent(tmp_path):
+def test_build_index_progress_none_is_silent(tmp_path):
     """progress=None (the default) never calls any callback."""
     lib = Librarian(Store(tmp_path / "mem"))
     dump = make_jira_dump(tmp_path)
     jira.ingest_jira(lib, dump, "dev", "ingest sample Jira dump")
-    # should not raise and returns a Report
-    rep = rebuild_indexes(lib, "dev", "rebuild indexes silently")
+    # should not raise and returns a MemIndex
+    mi = build_index(lib)
+    assert mi.N > 0
+
+
+def test_rebuild_indexes_is_a_silent_noop(tmp_path):
+    """rebuild_indexes is a no-op kept for compatibility: returns an ok Report,
+    never narrates progress."""
+    lib = Librarian(Store(tmp_path / "mem"))
+    dump = make_jira_dump(tmp_path)
+    jira.ingest_jira(lib, dump, "dev", "ingest sample Jira dump")
+    lines: list = []
+    rep = rebuild_indexes(lib, "dev", "rebuild indexes (no-op)", progress=lines.append)
     assert rep.ok
+    assert lines == []                          # nothing to narrate — no-op

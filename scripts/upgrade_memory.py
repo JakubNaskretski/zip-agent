@@ -12,9 +12,10 @@ not cost the agent its already-ingested knowledge, so this tool splits the two:
   dev/changelog.json
   dev/session_state.json (I11)
 
-  DROPPED: kb/indexes/** and their manifest entries (tier "indexes"). Derived
-  indexes are 100% rebuildable (invariant I13) and the new code may carry a
-  newer index schema — so they are rebuilt, never migrated.
+  DROPPED: any legacy kb/indexes/** and their manifest entries (tier "indexes").
+  Derived indexes are 100% rebuildable (invariant I13). On this branch the search
+  index is built in memory at open time from the live KB, so no index is shipped
+  at all — none to migrate, none to rebuild.
 
 This is owner-side offline tooling: it never modifies its inputs, and the
 output is written atomically (temp + os.replace, via the same ``pack_zip`` the
@@ -23,8 +24,9 @@ newer than what NEW's bundled code supports, nothing is written.
 
     python3 scripts/upgrade_memory.py OLD_memory.zip NEW_code.zip -o upgraded.zip
 
-After first boot of the upgraded ZIP the agent MUST rebuild the indexes
-(``from librarian import rebuild_indexes``) — the script reminds you, loudly.
+The upgraded ZIP is search-ready on first boot: ``retrieve.open_index`` builds
+the index in memory from the live files. ``rebuild_indexes`` is a no-op kept
+only for backward compatibility.
 """
 from __future__ import annotations
 
@@ -172,11 +174,11 @@ def upgrade(old_zip, new_zip, out="upgraded.zip") -> Path:
     print(f"  wrote          : {result}")
     print()
     print("=" * 64)
-    print("  REMINDER — the derived indexes were NOT carried over (I13).")
-    print("  After FIRST BOOT of the upgraded zip the agent must run:")
-    print("      from librarian import rebuild_indexes")
-    print('      rebuild_indexes(lib, author, "rebuild indexes after engine upgrade")')
-    print("  There is no search index until it does.")
+    print("  NOTE — any derived index files were NOT carried over (I13).")
+    print("  None are needed: the search index is built in memory at open time")
+    print("  from the live KB (retrieve.open_index), so the upgraded zip is")
+    print("  search-ready on first boot. rebuild_indexes() is now a no-op kept")
+    print("  only for backward compatibility.")
     print("=" * 64)
     return result
 

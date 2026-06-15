@@ -14,7 +14,7 @@ import json
 import pytest
 
 from librarian import KnowledgeUnit, Librarian, Store, rebuild_indexes, retrieve
-from librarian.index import _mech_aliases, _norm, build_index, load_sqlite
+from librarian.index import _mech_aliases, _norm, build_index
 
 
 # ---------------------------------------------------------------------------
@@ -76,11 +76,8 @@ def _con_after_rebuild(lib):
 
 
 def _aliases_for(con, canonical):
-    """Return {alias: via} for a canonical from the aliases table."""
-    rows = con.execute(
-        "SELECT alias, via FROM aliases WHERE canonical=?", (canonical,)
-    ).fetchall()
-    return {r[0]: r[1] for r in rows}
+    """Return {alias: via} for a canonical from the MemIndex aliases list."""
+    return {a: v for (a, c, v) in con.aliases if c == canonical}
 
 
 def _resolve(con, text, limit=10):
@@ -480,14 +477,14 @@ class TestResolveName:
         hits = _resolve(con, "sp", limit=2)
         assert len(hits) <= 2
 
-    def test_round_trip_through_serialize(self, tmp_path):
-        """Aliases survive the serialize/deserialize round-trip (SQLite bytes KU)."""
+    def test_aliases_resolve_through_open_index(self, tmp_path):
+        """Aliases resolve via open_index, which builds the MemIndex fresh from
+        the live KB — no serialize/deserialize, no rebuild step needed."""
         lib = _lib(tmp_path)
-        txn = lib.begin("dev", "seed for round-trip")
+        txn = lib.begin("dev", "seed for resolve-through-open")
         txn.add_ku(_sf_object_ku("ServicePoint__c"), body="obj")
         txn.commit()
-        rebuild_indexes(lib, "dev", "build index for round-trip test")
-        # open_index loads via lib.read_body + load_sqlite (the real path)
+        # open_index builds straight from the live files — the real path
         con = retrieve.open_index(lib)
         hits = _resolve(con, "service point")
         assert any(h["name"] == "ServicePoint__c" for h in hits)
@@ -549,14 +546,19 @@ class TestResolveName:
 # ===========================================================================
 
 class TestRebuildRegeneratesAliases:
-    def test_aliases_absent_before_rebuild(self, tmp_path):
-        """Before rebuild_indexes, the index KU doesn't even exist."""
+    def test_no_persisted_index_ku_and_unseeded_resolves_nothing(self, tmp_path):
+        """There is no persisted index KU now (the index lives in memory). And a
+        term only becomes resolvable once the entity/glossary that defines it is
+        actually seeded — until then open_index resolves nothing for it."""
         lib = _lib(tmp_path)
-        txn = lib.begin("dev", "seed only")
+        txn = lib.begin("dev", "seed only an unrelated entity")
         txn.add_ku(_sf_object_ku("ServicePoint__c"), body="obj")
         txn.commit()
-        # no index yet
+        # the index is in-memory only — no derived index KU is ever written
         assert lib.get("agent:index/search") is None
+        # a not-yet-seeded alias resolves to nothing (never a fuzzy guess)
+        con = retrieve.open_index(lib)
+        assert _resolve(con, "meter point") == []
 
     def test_aliases_present_after_rebuild(self, tmp_path):
         lib = _lib(tmp_path)

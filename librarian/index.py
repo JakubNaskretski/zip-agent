@@ -1,18 +1,20 @@
 """Search index — the cross-source entity bridge + full-text search, built as a
-single serialized SQLite KU.
+pure-Python, in-memory structure at open time from the live Knowledge Units.
 
 Derived and rebuildable (I13) from all active KUs. **Source-agnostic**: every
 source's KUs join here by shared entity names, which is what turns cross-source
 questions into O(1) lookups ("which <source> items mention X?"). Today only
 Salesforce feeds it; when Jira/Confluence/Mule land, they join automatically.
 
-The index is one `.sqlite` file holding three tables:
-  - `entities(name, name_norm, ku_id, source, kind)` — the bridge
-  - `docs` FTS5 over (title, entities, body) — keyword/prose search
-  - `aliases(alias TEXT, canonical TEXT, via TEXT)` — imprecise-name resolution
+There is NO persisted index blob and NO sqlite: the index is a :class:`MemIndex`
+held in memory only, assembled freshly from the manifest + kb/ files on every
+``retrieve.open_index`` call. It holds three things:
+  - ``entities`` — the bridge: ``(name, name_norm, ku_id, source, kind)`` tuples
+  - ``docs`` + ``postings`` + ``df`` — an in-memory inverted index for BM25
+    keyword/prose search over title/entities/body
+  - ``aliases`` — ``(alias, canonical, via)`` triples for imprecise-name resolution
 
-The alias table is DERIVED and REBUILDABLE (I13) — never hand-maintained.
-Three provenance tiers (``via``):
+The alias set is DERIVED — never hand-maintained. Three provenance tiers (``via``):
   - ``"mech"`` — mechanical variants from every entity name in ``entities``
     (strip ``__c``/``__r``; CamelCase split; underscores→spaces; initials acronym
     when the name has ≥ 2 words; no-space join of spaced words)
@@ -22,20 +24,20 @@ Three provenance tiers (``via``):
   - ``"curated"`` — any manifest KU whose id starts with ``curated:glossary/``;
     its body is one alias per line; its ``entities`` list holds the canonical names
 
-It is stored as the body of a single KU (`agent:index/search`, tier=indexes) and
-rebuilt via `rebuild_indexes()`. Idempotent: a logical hash of the KB state drives
-the no-op, so an unchanged KB doesn't churn the index.
+Because it is built fresh from the live files, the index is always current — there
+is nothing to persist and nothing to churn. ``rebuild_indexes()`` is kept as a
+no-op only for backward compatibility.
 """
 from __future__ import annotations
 
 import json
+import math
 import re
-import sqlite3
-import tempfile
-from pathlib import Path
+from collections import Counter
+from dataclasses import dataclass, field
 
 from .digest._progress import EVERY as _EVERY
-from .schema import KnowledgeUnit, content_hash
+from .schema import content_hash
 
 INDEX_ID = "agent:index/search"
 INDEX_PATH = "kb/indexes/search.sqlite"
@@ -47,6 +49,15 @@ _BODY_CAP = 200_000
 _LABEL_GRAPH_IDS = ("salesforce:graph/sf", "mule:graph/mule")
 
 _CAMEL_RE = re.compile(r"(?<=[a-z0-9])(?=[A-Z])|(?<=[A-Z])(?=[A-Z][a-z])")
+
+# Full-text tokenizer (mirrors the old FTS5 unicode61 word-splitting closely
+# enough for our needs): word characters, lowercased.
+_TOK = re.compile(r"\w+", re.UNICODE)
+
+
+def _toks(text):
+    """Lowercased word tokens of ``text`` (``[]`` for empty/None)."""
+    return [t.lower() for t in _TOK.findall(text or "")]
 
 
 def _norm(text: str) -> str:
@@ -208,63 +219,63 @@ def _curated_aliases(lib):
                     yield alias, canonical, "curated"
 
 
-def _serialize(con) -> bytes:
-    try:
-        return con.serialize()              # Python 3.11+, SQLite w/ deserialize
-    except (AttributeError, sqlite3.OperationalError):   # pragma: no cover
-        with tempfile.NamedTemporaryFile(suffix=".sqlite", delete=False) as tf:
-            tmp = Path(tf.name)
-        dst = sqlite3.connect(tmp)
-        con.backup(dst)
-        dst.close()
-        data = tmp.read_bytes()
-        tmp.unlink(missing_ok=True)
-        return data
+@dataclass
+class MemIndex:
+    """In-memory search index built from the live KB (no persistence, no sqlite).
+
+    Attributes
+    ----------
+    entities:
+        ``(name, name_norm, ku_id, source, kind)`` tuples — the cross-source
+        entity bridge.
+    docs:
+        one dict per searchable KU::
+
+            {"ku_id", "source", "title", "path", "tf": Counter, "dl": int}
+
+    df:
+        ``token -> number of docs containing it`` (document frequency).
+    postings:
+        ``token -> list[doc_index]`` (inverted index into ``docs``).
+    N:
+        number of docs.
+    avgdl:
+        mean document length (token count) across ``docs``.
+    aliases:
+        ``(alias, canonical, via)`` triples for imprecise-name resolution.
+    logical:
+        a content hash of the logical KB state (ids + entities + content_hash).
+    """
+    entities: list = field(default_factory=list)
+    docs: list = field(default_factory=list)
+    df: "Counter" = field(default_factory=Counter)
+    postings: dict = field(default_factory=dict)
+    N: int = 0
+    avgdl: float = 0.0
+    aliases: list = field(default_factory=list)
+    logical: str = ""
 
 
-def load_sqlite(data: bytes):
-    """Open serialized index bytes as an in-memory connection."""
-    con = sqlite3.connect(":memory:")
-    try:
-        con.deserialize(data)               # Python 3.11+
-    except (AttributeError, sqlite3.OperationalError):   # pragma: no cover
-        with tempfile.NamedTemporaryFile(suffix=".sqlite", delete=False) as tf:
-            tmp = Path(tf.name)
-        tmp.write_bytes(data)
-        disk = sqlite3.connect(tmp)
-        disk.backup(con)
-        disk.close()
-        tmp.unlink(missing_ok=True)
-    return con
+def build_index(lib, progress=None) -> MemIndex:
+    """Assemble a :class:`MemIndex` from the current live KB state.
 
+    Pure Python: scans the manifest, reads each searchable KU body from the
+    kb/ files, and builds the entity bridge, the inverted index for BM25, and
+    the derived alias set. Nothing is persisted.
 
-def build_index(lib, progress=None):
-    """Return (sqlite_bytes, logical_hash) for the current KB state.
-
-    ``progress`` (callable, e.g. ``print``): one-line count every ``EVERY``
-    KUs during the dominant FTS population loop, plus a compact final line."""
-    con = sqlite3.connect(":memory:")
-    con.execute("CREATE TABLE entities(name TEXT, name_norm TEXT, ku_id TEXT, source TEXT, kind TEXT)")
-    con.execute("CREATE INDEX ix_ent ON entities(name_norm)")
-    # contentless FTS: postings only — bodies already live as kb/ files, and a
-    # stored copy roughly tripled the index (observed 40 MB on a 7k-KU org).
-    # docmap carries the rowid -> KU identity that contentless tables can't.
-    con.execute("CREATE VIRTUAL TABLE docs USING fts5("
-                "title, entities, body, content='', tokenize='unicode61')")
-    con.execute("CREATE TABLE docmap(rowid INTEGER PRIMARY KEY, ku_id TEXT, "
-                "source TEXT, title TEXT, path TEXT)")
-    # alias table: imprecise-name resolution (derived, never hand-maintained)
-    con.execute("CREATE TABLE aliases(alias TEXT, canonical TEXT, via TEXT)")
-    con.execute("CREATE INDEX ix_alias ON aliases(alias)")
+    ``progress`` (callable, e.g. ``print``): one-line count every ``EVERY`` KUs
+    during the dominant body-indexing loop, plus a compact final line."""
+    mi = MemIndex()
     sig = []
+    ent_names = set()
     indexed = 0
     for ku in sorted(lib.manifest.all(), key=lambda k: k.id):
         if ku.status != "active" or ku.id == INDEX_ID:
             continue
         ents = list(ku.entities or [])
         for ent in ents:
-            con.execute("INSERT INTO entities VALUES(?,?,?,?,?)",
-                        (ent, ent.lower(), ku.id, ku.source, ku.kind))
+            mi.entities.append((ent, ent.lower(), ku.id, ku.source, ku.kind))
+            ent_names.add(ent)
         if ku.kind not in _FTS_SKIP_KINDS:
             try:
                 raw = lib.store.read(ku.path)
@@ -275,64 +286,64 @@ def build_index(lib, progress=None):
                             # text sidecar KU is the search surface, not junk tokens
             body = raw.decode("utf-8", "replace")[:_BODY_CAP]
             if body or ents or ku.title:
-                cur = con.execute("INSERT INTO docs(title, entities, body) VALUES(?,?,?)",
-                                  (ku.title, " ".join(ents), body))
-                con.execute("INSERT INTO docmap VALUES(?,?,?,?,?)",
-                            (cur.lastrowid, ku.id, ku.source, ku.title, ku.path))
+                toks = _toks(ku.title) + _toks(" ".join(ents)) + _toks(body)
+                tf = Counter(toks)
+                idx = len(mi.docs)
+                mi.docs.append({"ku_id": ku.id, "source": ku.source,
+                                "title": ku.title, "path": ku.path,
+                                "tf": tf, "dl": len(toks)})
+                for t in tf:
+                    mi.postings.setdefault(t, []).append(idx)
+                    mi.df[t] += 1
         sig.append([ku.id, sorted(ents), ku.content_hash])
         indexed += 1
         if progress is not None and indexed % _EVERY == 0:
             progress(f"index rebuild: {indexed} KUs indexed")
-    if progress is not None:
-        if indexed % _EVERY != 0 and indexed > 0:
-            progress(f"index rebuild: done — {indexed} KUs indexed")
-        elif indexed > 0:
-            progress(f"index rebuild: done — {indexed} KUs indexed")
+    if progress is not None and indexed > 0:
+        progress(f"index rebuild: done — {indexed} KUs indexed")
 
-    # ---- populate aliases ----
-    # Collect the set of distinct canonical entity names for the mech pass
-    # and the set for the label-alias membership check.
-    all_names_rows = con.execute("SELECT DISTINCT name FROM entities").fetchall()
-    all_names = {r[0] for r in all_names_rows}
+    mi.N = len(mi.docs)
+    mi.avgdl = (sum(d["dl"] for d in mi.docs) / mi.N) if mi.N else 0.0
 
-    alias_pairs: set = set()   # (alias, canonical, via) — deduplicate
+    # ---- derive aliases ----
+    names = ent_names
+    aset: set = set()   # (alias, canonical, via) — deduplicate
 
     # (a) mechanical aliases for every distinct entity name
-    for name in all_names:
+    for name in names:
         for alias in _mech_aliases(name):
-            alias_pairs.add((alias, name, "mech"))
+            aset.add((alias, name, "mech"))
 
-    # (b) label aliases from salesforce:graph/sf and mule:graph/mule only
+    # (b) label aliases from salesforce:graph/sf and mule:graph/mule only —
+    #     emitted only when the canonical exists in the entity bridge
     for alias, canonical, via in _label_aliases(lib):
-        # only emit if the canonical exists in entities (set-membership check)
-        if canonical in all_names:
-            alias_pairs.add((alias, canonical, via))
+        if canonical in names:
+            aset.add((alias, canonical, via))
 
     # (c) curated glossary aliases — canonicals trusted as-is, no pre-existence check
     for alias, canonical, via in _curated_aliases(lib):
-        alias_pairs.add((alias, canonical, via))
+        aset.add((alias, canonical, via))
 
-    con.executemany("INSERT INTO aliases VALUES(?,?,?)", alias_pairs)
-
-    con.commit()
-    data = _serialize(con)
-    con.close()
-    logical = content_hash(json.dumps(sig, sort_keys=True, ensure_ascii=False))
-    return data, logical
+    mi.aliases = sorted(aset)
+    mi.logical = content_hash(json.dumps(sig, sort_keys=True, ensure_ascii=False))
+    return mi
 
 
 def rebuild_indexes(lib, author, rationale, progress=None):
-    """Build the search index and commit it as a derived KU. Idempotent when the
-    KB is unchanged (the logical hash drives the no-op). Returns the Report.
+    """No-op kept for backward compatibility.
 
-    ``progress`` (callable, e.g. ``print``): one-line count every ``EVERY``
-    KUs during the FTS population loop, plus a compact final line."""
-    data, logical = build_index(lib, progress=progress)
-    ku = KnowledgeUnit(
-        id=INDEX_ID, kind="index", tier="indexes", source="agent",
-        path=INDEX_PATH, title="Search index (entity bridge + FTS)",
-        confidence="VERIFIED", content_hash=logical,
-    )
-    txn = lib.begin(author, rationale)
-    txn.ingest_ku(ku, body=data)
-    return txn.commit()
+    The search index is now built in memory from the live KB on every
+    ``retrieve.open_index`` call, so there is nothing to persist and nothing to
+    rebuild. This commits an EMPTY transaction (no KU written, no generation
+    bump) and returns its ok Report — so existing ``rebuild_indexes(...)`` call
+    sites keep working unchanged. Signature preserved (``progress`` accepted and
+    ignored)."""
+    try:
+        return lib.begin(author, rationale).commit()
+    except Exception:   # pragma: no cover — empty commit cannot fail today
+        # Fall back to constructing a minimal ok Report exactly as commit()
+        # returns for an empty change set (no rows): ok, no churn.
+        from .librarian import Report
+        rep = Report()
+        rep.committed_generation = lib.manifest.generation
+        return rep
