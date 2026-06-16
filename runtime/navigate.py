@@ -54,7 +54,13 @@ def load_shard(ws, source: str) -> dict:
     path = layout.graph_shard(source)
     if not ws.exists(path):
         return dict(_EMPTY, nodes=[], edges=[], unresolved=[], errors=[])
-    data = json.loads(ws.read_text(path))
+    try:
+        data = json.loads(ws.read_text(path))
+    except json.JSONDecodeError as e:
+        # a corrupt shard must fail loudly with the path, not a bare traceback from
+        # deep inside a caller (e.g. a maintenance sweep over every source).
+        raise ValueError(f"{path} is not valid JSON ({e}) — the '{source}' shard is "
+                         "corrupt; restore or re-ingest it") from e
     # tolerant of the bare/partial shapes persistence.from_json accepts
     return {k: list(data.get(k, []) or []) for k in ("nodes", "edges", "unresolved", "errors")}
 

@@ -135,6 +135,8 @@ def rename(ws, source: str, old_rel: str, new_rel: str) -> dict:
     old_raw, new_raw = _raw(source, old_rel), _raw(source, new_rel)
     if not ws.exists(old_raw):
         raise FileNotFoundError(old_raw)
+    if ws.exists(new_raw):
+        raise FileExistsError(f"{new_raw} already exists — forget it first, or pick a free name")
     ws.write_bytes(new_raw, ws.read_bytes(old_raw))
     ws.remove(old_raw)
     if ws.exists(old_raw + ".txt"):

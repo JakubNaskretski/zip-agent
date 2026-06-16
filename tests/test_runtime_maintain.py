@@ -1,6 +1,8 @@
 """Maintenance — remove / rename / reconcile a base source, and the work links
 that pointed at it. Uses markdown docs (simple, deterministic) as the base source.
 """
+import pytest
+
 from runtime import maintain, navigate, search, work
 from runtime.ingest import digest_to_tree
 from runtime.storage import Workspace
@@ -110,3 +112,49 @@ def test_deep_review_and_prune_base_dangle(tmp_path):
     assert work.prune_orphans(ws, deep=True) >= 1
     assert work.review(ws, deep=True)["base_dangles"] == []
     assert any(l["other"] == f"docs:{did}" for l in work.links_of(ws, cid))  # valid edge survived
+
+
+# --------------------------------------------------------------------------- #
+# rename onto an existing destination is refused — it would destroy that file
+# --------------------------------------------------------------------------- #
+def test_rename_to_existing_destination_is_refused(tmp_path):
+    ws = _docs_ws(tmp_path, {"keep.md": "# Keep\n\nkeep body\n",
+                             "other.md": "# Other\n\nother body\n"})
+    with pytest.raises(FileExistsError):
+        maintain.rename(ws, "docs", "keep.md", "other.md")
+    # nothing moved or clobbered: both files + both nodes intact
+    assert ws.exists("kb/raw/docs/keep.md") and ws.exists("kb/raw/docs/other.md")
+    assert "keep body" in (navigate.read_source(ws, "docs", _docfile(ws, "keep.md")) or "")
+    assert "other body" in (navigate.read_source(ws, "docs", _docfile(ws, "other.md")) or "")
+
+
+# --------------------------------------------------------------------------- #
+# deep prune leaves a link into a NOT-ingested source alone (absent != deleted)
+# --------------------------------------------------------------------------- #
+def test_deep_prune_preserves_links_into_absent_source(tmp_path):
+    ws = _docs_ws(tmp_path, {"a.md": "# A\n\nalpha body\n"})
+    cid = work.add_node(ws, "concept")
+    work.link(ws, cid, "salesforce:object/Account", kind="relates-to")   # salesforce never ingested
+    assert not ws.exists("graph/salesforce.json")
+
+    assert work.review(ws, deep=True)["base_dangles"] == []   # absent shard not treated as a dangle
+    assert work.prune_orphans(ws, deep=True) == 0             # so nothing dropped
+    assert any(l["other"] == "salesforce:object/Account" for l in work.links_of(ws, cid))
+
+
+# --------------------------------------------------------------------------- #
+# reconcile booted from a zip base drops nothing — every base file is in the archive
+# --------------------------------------------------------------------------- #
+def test_reconcile_from_zip_base_drops_nothing(tmp_path):
+    build = _docs_ws(tmp_path, {"a.md": "# A\n\nalpha body\n", "b.md": "# B\n\nbeta body\n"})
+    a = _docfile(build, "a.md")
+    work.link(build, work.add_node(build, "t"), f"docs:{a['id']}", kind="about")
+    zip_path = build.export(str(tmp_path / "memory.zip"))
+
+    ws = Workspace(str(zip_path), str(tmp_path / "session_work"))   # zip base, empty overlay
+    res = maintain.reconcile(ws)
+    assert res["sources"] == {} and res["work_edges_cleaned"] == 0  # base files all present
+    g = navigate.load_shard(ws, "docs")
+    assert any(n.get("source_path") == "a.md" for n in g["nodes"])
+    assert any(n.get("source_path") == "b.md" for n in g["nodes"])
+    assert work.links_of(ws, f"docs:{a['id']}")                    # work link untouched

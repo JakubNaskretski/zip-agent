@@ -274,15 +274,22 @@ def drop_edges_to(ws, refs) -> int:
 
 def _bad_base_refs(ws, edges) -> set:
     """The base refs (`"<source>:<id>"`) among ``edges`` whose node no longer exists
-    in its shard. Loads each referenced base shard once."""
+    in its shard. Loads each referenced base shard once.
+
+    A ref into a source whose shard is ABSENT (not ingested this session — e.g. you
+    booted a slice of the KB) is left ALONE, not flagged: absent ≠ deleted, same as
+    the digest's rule. We only flag a ref whose shard is present but missing the node
+    — that's a genuine dangle into a removed source node."""
     refs = {x for e in edges for x in (e.get("src"), e.get("dst"))
             if isinstance(x, str) and ":" in x and not x.startswith("work:")}
     cache, bad = {}, set()
     for r in refs:
         src, nid = r.split(":", 1)
         if src not in cache:
-            cache[src] = {n.get("id") for n in navigate.load_shard(ws, src).get("nodes", [])}
-        if nid not in cache[src]:
+            cache[src] = ({n.get("id") for n in navigate.load_shard(ws, src)["nodes"]}
+                          if ws.exists(layout.graph_shard(src)) else None)
+        known = cache[src]
+        if known is not None and nid not in known:
             bad.add(r)
     return bad
 
