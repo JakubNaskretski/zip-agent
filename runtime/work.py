@@ -255,13 +255,45 @@ def show(ws, node_ref: str) -> dict:
 # --------------------------------------------------------------------------- #
 # keeping it tidy
 # --------------------------------------------------------------------------- #
-def review(ws, prefix: str = "") -> dict:
+def drop_edges_to(ws, refs) -> int:
+    """Remove every work edge whose endpoint is in ``refs`` (a set of node ids).
+    Used when the base nodes those edges pointed at are removed, so the junction
+    doesn't dangle. Returns the count removed."""
+    refs = set(refs)
+    if not refs:
+        return 0
+    g = _load(ws)
+    before = len(g["edges"])
+    g["edges"] = [e for e in g["edges"]
+                  if e.get("src") not in refs and e.get("dst") not in refs]
+    removed = before - len(g["edges"])
+    if removed:
+        _save(ws, g)
+    return removed
+
+
+def _bad_base_refs(ws, edges) -> set:
+    """The base refs (`"<source>:<id>"`) among ``edges`` whose node no longer exists
+    in its shard. Loads each referenced base shard once."""
+    refs = {x for e in edges for x in (e.get("src"), e.get("dst"))
+            if isinstance(x, str) and ":" in x and not x.startswith("work:")}
+    cache, bad = {}, set()
+    for r in refs:
+        src, nid = r.split(":", 1)
+        if src not in cache:
+            cache[src] = {n.get("id") for n in navigate.load_shard(ws, src).get("nodes", [])}
+        if nid not in cache[src]:
+            bad.add(r)
+    return bad
+
+
+def review(ws, prefix: str = "", *, deep: bool = False) -> dict:
     """What to clean up: notes whose `derived_from` source files changed/vanished
     (`stale`), and edges referencing a deleted work node (`orphan_edges`).
 
-    Orphan detection covers ``work:`` endpoints only — a dangling base ref
-    (e.g. a link to a `salesforce:` node that was later retired) is NOT flagged,
-    to avoid loading every base shard on each review."""
+    By default, dangling base refs are NOT checked (cheap — no base shards loaded).
+    Pass ``deep=True`` to also resolve every base ref and report edges whose base
+    endpoint is gone (`base_dangles`) — e.g. a link to a source node since removed."""
     g = _load(ws)
     node_ids = {n.get("id") for n in g["nodes"]}
     stale = []
@@ -274,17 +306,30 @@ def review(ws, prefix: str = "") -> dict:
     orphan = [e for e in g["edges"]
               if any(isinstance(x, str) and x.startswith("work:") and x not in node_ids
                      for x in (e.get("src"), e.get("dst")))]
-    return {"stale": stale, "orphan_edges": orphan}
+    out = {"stale": stale, "orphan_edges": orphan}
+    if deep:
+        bad = _bad_base_refs(ws, g["edges"])
+        out["base_dangles"] = [e for e in g["edges"]
+                               if e.get("src") in bad or e.get("dst") in bad]
+    return out
 
 
-def prune_orphans(ws) -> int:
-    """Drop work edges that reference a deleted work node. Returns the count removed."""
+def prune_orphans(ws, *, deep: bool = False) -> int:
+    """Drop work edges that reference a deleted work node. With ``deep=True`` also
+    drop edges whose base endpoint no longer exists (resolves base shards).
+    Returns the count removed."""
     g = _load(ws)
     node_ids = {n.get("id") for n in g["nodes"]}
+    bad_base = _bad_base_refs(ws, g["edges"]) if deep else set()
 
     def ok(e):
-        return not any(isinstance(x, str) and x.startswith("work:") and x not in node_ids
-                       for x in (e.get("src"), e.get("dst")))
+        for x in (e.get("src"), e.get("dst")):
+            if isinstance(x, str):
+                if x.startswith("work:") and x not in node_ids:
+                    return False
+                if x in bad_base:
+                    return False
+        return True
 
     before = len(g["edges"])
     g["edges"] = [e for e in g["edges"] if ok(e)]

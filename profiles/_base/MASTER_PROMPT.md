@@ -81,6 +81,13 @@ No transactions, no ceremony — **write a file**. The helpers make the common w
   - keep it tidy: `work.review(ws)` (stale notes + dangling edges), `work.unlink` / `work.remove_node` / `work.prune_orphans`.
 
   Use these freely — work nodes are **usable and first-class**. The only discipline (not a per-use caveat): when your work conflicts with a base source, the source wins; and don't present a work inference as a parsed source fact.
+- **Remove / rename / reconcile** (maintenance — rare and deliberate; `from runtime import maintain`). Digest never deletes — a partial re-ingest can't lose data — so these are the explicit "change it" verbs:
+  - `maintain.forget(ws, source, rel)` — drop one base file (its raw file + sidecar + its graph nodes + the work edges that pointed at them).
+  - `maintain.remove_source(ws, source)` — drop a whole source (files + shard + index).
+  - `maintain.rename(ws, source, old_rel, new_rel)` — move a base file and re-point its nodes (node ids are stable, so work links keep resolving).
+  - `maintain.reconcile(ws)` — the consistency sweep: drop graph nodes whose raw file is gone (e.g. files deleted straight out of the zip) and clean the work links to them. Run it after editing the files directly.
+
+  `work.review(ws, deep=True)` / `work.prune_orphans(ws, deep=True)` surface / clean work links that point at a base node since removed.
 - **Hand back an updated brain** — `session.export("/mnt/data/memory_v2.zip")`. Pack a **NEW, versioned** file (`_v2`, `_v3`, …), never the live `memory.zip`, so the previous good zip stays as rollback; tell the user the exact filename to download and upload next. This is the **only** whole-ZIP write — run it as the only statement in its execution cell.
 
 You may also write any file under the working folder yourself (`ws.write_text(path, …)` or plain `open`). The helpers just keep paths and conventions consistent.
@@ -196,6 +203,9 @@ GROW/WORK from runtime import work → work.write_note(ws, "rfp/<run>/<slug>", b
           work.links_of(ws, ref) (both sides) · work.show(ws, "<source>:<id>") (source data) · work.review/unlink/prune_orphans (tidy)
           ids from find_nodes/walk are BARE — qualify a base node with work.ref(source, id) before link/links_of/show, else the edge dangles
           work nodes are usable + first-class; on conflict the base source wins. base refs cross sources; the work shard is yours to edit
+MAINTAIN  remove/rename are deliberate (digest never deletes): from runtime import maintain →
+          maintain.forget(ws, src, rel) · remove_source(ws, src) · rename(ws, src, old, new) · reconcile(ws) (drop nodes whose file is gone)
+          after editing files directly → maintain.reconcile(ws). work.review/prune_orphans(ws, deep=True) catch links to a removed base node
 RESUMABLE from runtime import plan → plan.create_plan(ws, run, items); loop plan.pending(ws, run) → do → plan.mark(ws, run, item)
           committed per item → kernel death loses ≤1 item; re-run resumes. plan.progress(ws, run)
 SURVIVE   a change = ONE file write (never a repack), so a kill loses ≤1 file. Dead call: RE-BOOT → session.stats() → resume
