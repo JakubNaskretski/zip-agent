@@ -57,9 +57,9 @@ plus per-source L1 aids. Knowledge is read on demand; nothing is held in memory.
 | `index/L1/<source>.md` | Per-source routing aid (node types, naming, how to resolve a name in code). Loaded on demand. |
 | `graph/<source>.json` | One **structure-graph shard** per source. Loaded into a variable and walked; never dumped into context. |
 | `kb/raw/<source>/…` | Verbatim source files (and `.txt` sidecars for document prose). Read by excerpt, on demand. |
-| `kb/curated/…` | The agent's own findings — plain notes it authors. |
+| `kb/work/…` + `graph/work.json` | The agent's **work layer** — notes it authors plus the graph edges it draws (incl. cross-source joins). |
 | `dev/…` | Durable plan / worklist state (survives a sandbox reset). |
-| `runtime/` | **The lightweight engine** — boot, navigation, ingest, search, the doc/notes/plan helpers. The only code imported on boot. |
+| `runtime/` | **The lightweight engine** — boot, navigation, ingest, search, the doc/work/plan/maintain helpers. The only code imported on boot. |
 | `graphbuilder/` | The metadata-graph **parsing engine** — heavy; extracted and imported **only at ingest**, never for answering. |
 | `librarian/` | The **digest parsers + schema** (the subset the runtime uses at ingest). |
 | `pptx/` | On-demand deck-render skill bundle (the `rfp` profile). |
@@ -76,7 +76,7 @@ the builder's instructions field.
 | **Boot** | Connects to the retained ZIP, unpacks only the small `runtime/`, and loads only `index/L0.md` into context. No whole-ZIP extract, no held engine. Re-running boot cheaply reconnects after a kernel reset. |
 | **ASK** | Routes a question through L0 → the right source → loads that graph shard + the slices it needs; walks relationships in code; full-text search for prose. Answers with cited sources + a confidence tier. |
 | **DIGEST** | Ingests an uploaded source ZIP: parses it, writes the raw files, merges the source's graph shard, and regenerates the indexes — every change a single-file write (no repack). Re-ingesting unchanged content is a no-op. |
-| **GROW** | Writes curated findings as plain notes under `kb/curated/`, recording the sources they rest on so a later change can flag them stale. |
+| **GROW** | Builds in the **work layer** (`kb/work/` + `graph/work.json`) — notes it authors and edges it draws between nodes (within and across sources), recording the sources they rest on so a later change can flag them stale. |
 | **Export** | On request, packs a **new, versioned** `memory.zip` for you to download — the only place the whole archive is written. |
 
 ---

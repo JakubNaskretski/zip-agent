@@ -1,6 +1,6 @@
 {
   "name": "project",
   "title": "Project support agent",
-  "description": "The general project-knowledge agent: ASK / DIGEST / GROW / REORG over the Salesforce / Mule / Jira / Confluence / docs knowledge base. No prompt overlays — its instructions are the shared base contract verbatim.",
+  "description": "The general project-knowledge agent: ASK / DIGEST / GROW / MAINTAIN over the Salesforce / Mule / Jira / Confluence / docs knowledge base. No prompt overlays — its instructions are the shared base contract verbatim.",
   "overlays": []
 }

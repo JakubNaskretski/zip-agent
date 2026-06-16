@@ -383,3 +383,21 @@ def test_idempotent_redigest_after_forget(tmp_path):
     g = navigate.load_shard(ws, "docs")
     assert any(n.get("source_path") == "b.md" for n in g["nodes"])        # b kept
     assert not any(n.get("source_path") == "a.md" for n in g["nodes"])    # a not resurrected
+
+
+# --------------------------------------------------------------------------- #
+# reconcile must NOT prune a source whose raw-file naming differs from its node
+# source_path (the mule adapter flattens raw paths + stamps full/URI source_paths).
+# On a clean, untouched mule KB reconcile must drop nothing.
+# --------------------------------------------------------------------------- #
+def test_reconcile_clean_mule_kb_drops_nothing(tmp_path):
+    from tests.test_digest_mule import make_apikit_app
+    app = make_apikit_app(tmp_path / "app")
+    ws = Workspace(None, str(tmp_path / "work"))
+    digest_to_tree(ws, "mule", str(app))
+    before = len(navigate.load_shard(ws, "mule")["nodes"])
+    assert before > 5                                            # a real graph, not a stub
+
+    res = maintain.reconcile(ws)
+    assert res["sources"] == {} and res["skipped"] == {}        # path-scheme divergence != deletion
+    assert len(navigate.load_shard(ws, "mule")["nodes"]) == before   # nothing dropped

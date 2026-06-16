@@ -75,12 +75,20 @@ def reconcile(ws, *, sources=None) -> dict:
     sweep — covers files deleted straight out of the zip), clean the work edges that
     pointed at them, and regenerate the indexes. Explicit by design.
 
-    Two guards keep this from ever mistaking *absence* for *deletion*:
+    Three guards keep this from ever mistaking *absence* (or a path-scheme quirk) for
+    *deletion* — reconcile only DROPS, so a false positive is data loss:
 
     * A source whose **entire** raw subtree is absent is SKIPPED, not pruned — that is
       a structure-only slice (the graph shipped without ``kb/raw/<source>/``) or a
       not-yet-shipped source, never "every file was deleted." Reported under
       ``skipped``. (To drop a whole source on purpose, use :func:`remove_source`.)
+    * A node's ``source_path`` is only a *deletion candidate* when it is a real raw
+      file that is truly GONE: it must be a relative path (an absolute one, e.g. a Mule
+      APIkit URI ``/api/*``, is not a file), and **neither its full path NOR its
+      basename** may exist in the raw tree. The basename check defends against a source
+      whose raw files are written under a different rel than the engine stamps as
+      ``source_path`` (the Mule adapter does this) — there the file is *present under
+      another name*, not deleted, so reconcile must not prune it.
     * The sweep is **atomic**: every target shard is loaded and decided BEFORE any is
       mutated, so a corrupt shard (``load_shard`` raises) aborts with nothing
       half-written — never one source pruned and another left untouched.
@@ -93,10 +101,15 @@ def reconcile(ws, *, sources=None) -> dict:
         paths = {sp for n in g["nodes"] if (sp := n.get("source_path"))}
         if not paths:
             continue
-        if not ws.listing(layout.raw_dir(source) + "/"):
+        raw_files = ws.listing(layout.raw_dir(source) + "/")
+        if not raw_files:
             skipped[source] = len(paths)                      # whole raw tree absent → not a deletion
             continue
-        missing = {p for p in paths if not ws.exists(_raw(source, p))}
+        raw_basenames = {r.rsplit("/", 1)[-1] for r in raw_files}
+        missing = {p for p in paths
+                   if not p.startswith("/")                   # not a URI / abs path → could be a file
+                   and not ws.exists(_raw(source, p))         # full raw path is gone …
+                   and p.rsplit("/", 1)[-1] not in raw_basenames}  # … and so is its basename → truly deleted
         if missing:
             plan.append((source, g, missing))
     # PASS 2 — apply.

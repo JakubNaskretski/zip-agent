@@ -45,7 +45,7 @@ print(session.l0)                # the knowledge map → into context; route eve
 
 Booting does **not** unpack the knowledge base and does **not** hold a parsing engine. Graph shards and source files are read on demand; the heavy parsing engine is extracted and imported **only when you ingest** (§4 DIGEST handles that for you). `(If your host exposes a working directory other than /mnt/data, adjust the paths.)`
 
-If a session needs offline wheels (the optional tree-sitter AST Apex backend), they live under `reference/wheelhouse/`; install them best-effort only when a digest actually needs the AST backend — never to reach a source system (rule 1).
+If this build ships offline wheels (the optional tree-sitter AST Apex backend), they live under `reference/wheelhouse/`; install them best-effort only when a digest actually needs the AST backend — never to reach a source system (rule 1). If no such directory is present, the stdlib regex Apex backend is used automatically — digest works without it, nothing to install.
 
 ---
 
@@ -60,7 +60,7 @@ The graph **is** the index. Each source is a separate structure graph, stored as
 | `index/L1/<source>.md` | per-source routing aid — types, naming, samples | load on demand when routing into a source |
 | `graph/<source>.json` | one **structure-graph shard** per source | load into a variable; walk it; never print whole |
 | `kb/raw/<source>/…` | verbatim source files | read by excerpt, on demand |
-| `kb/raw/docs/<rel>.txt` | plain-text sidecars (the search surface) | full-text search |
+| `kb/raw/docs/<rel>.txt` | plain-text sidecars for office docs | full-text searchable (so are the other sources' raw files — see below) |
 | `kb/work/…` + `graph/work.json` | **your work layer** — notes you author + the edges you draw | write & link freely (§3); usable, connected to the sources, cleanable |
 | `dev/…` | plan / state files | the durable worklist (§4 survival) |
 
@@ -105,7 +105,7 @@ You may also write any file under the working folder yourself (`ws.write_text(pa
   print(summary)   # {source, files_written, shard, nodes, edges, unresolved, errors, indexes}
   ```
 
-  `digest_to_tree` parses the tree (reusing the source's parser verbatim), writes each file under `kb/raw/<source>/`, merges the freshly-parsed graph into `graph/<source>.json`, and regenerates `index/L0.md` + `index/L1/<source>.md` — every write a single file (no repack). It extracts the heavy parsing engine on first call. Pass `progress=print` on a big org. Surface `unresolved`/`errors` from the summary — never swallow them. Search is always current — it scans the text sidecars on demand, so a digest is immediately searchable with no rebuild step.
+  `digest_to_tree` parses the tree (reusing the source's parser verbatim), writes each file under `kb/raw/<source>/`, merges the freshly-parsed graph into `graph/<source>.json`, and regenerates `index/L0.md` + `index/L1/<source>.md` — every write a single file (no repack). It extracts the heavy parsing engine on first call. Pass `progress=print` on a big org. Surface `unresolved`/`errors` from the summary — never swallow them. Search is always current — it scans every source's raw text on demand (the office-doc sidecars **and** Salesforce/Mule code & config and Jira/Confluence JSON), so a digest is immediately searchable with no rebuild step.
 - **GROW** — build in your work layer (§3): write work notes, add concept nodes, and `link` related things together (within and across sources) so the knowledge is navigable. Cite the base sources your work rests on; keep the layer tidy with `work.review`.
 
 ### Long operations — sandbox survival
@@ -135,7 +135,7 @@ g = navigate.load_shard(ws, "salesforce")         # the shard → a Python varia
 
 **Step 1 — classify & route (via L0):**
 - a *named thing* / *relationship* ("what is X", "what calls X", "what fires when Z changes") → the **graph shard**
-- a *concept / keywords / prose* ("how is bulk import handled", "which docs mention retries") → **full-text search** over the sidecars
+- a *concept / keywords / prose* ("how is bulk import handled", "which docs mention retries") → **full-text search** over every source's raw text (doc sidecars, SF/Mule code & config, Jira/Confluence JSON)
 
 **Step 2 — the primitives:**
 
