@@ -49,9 +49,11 @@ def _load(ws) -> dict:
 
 
 def _save(ws, g: dict) -> None:
-    nodes = sorted(g.get("nodes", []), key=lambda n: n.get("id", ""))
+    # str-coerce sort keys (like maintain._save_shard / persistence) so a hand-edited
+    # work shard with a non-string id/endpoint sorts instead of raising a bare TypeError.
+    nodes = sorted(g.get("nodes", []), key=lambda n: str(n.get("id", "")))
     edges = sorted(g.get("edges", []),
-                   key=lambda e: (e.get("src", ""), e.get("type", ""), e.get("dst", "")))
+                   key=lambda e: (str(e.get("src", "")), str(e.get("type", "")), str(e.get("dst", ""))))
     out = {"version": 1, "nodes": nodes, "edges": edges, "unresolved": [], "errors": []}
     ws.write_text(layout.WORK_SHARD, json.dumps(out, indent=2, sort_keys=True, ensure_ascii=False))
 
@@ -286,8 +288,13 @@ def _bad_base_refs(ws, edges) -> set:
     for r in refs:
         src, nid = r.split(":", 1)
         if src not in cache:
-            cache[src] = ({n.get("id") for n in navigate.load_shard(ws, src)["nodes"]}
-                          if ws.exists(layout.graph_shard(src)) else None)
+            if not ws.exists(layout.graph_shard(src)):
+                cache[src] = None                            # absent → not deleted, leave alone
+            else:
+                try:
+                    cache[src] = {n.get("id") for n in navigate.load_shard(ws, src)["nodes"]}
+                except ValueError:
+                    cache[src] = None                        # corrupt/unreadable → don't judge its refs
         known = cache[src]
         if known is not None and nid not in known:
             bad.add(r)

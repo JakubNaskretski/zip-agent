@@ -28,6 +28,11 @@ from typing import Iterable, Optional
 # matches build_memory.py's pack settings — fast, deterministic enough for transport
 _PACK_COMPRESSLEVEL = 6
 
+# durable record of base members removed this session, written into the overlay so a
+# removal survives a re-boot from the same base+overlay (not only an export). Excluded
+# from listing/export — it is overlay metadata, never knowledge.
+_TOMBSTONE = ".removed"
+
 
 class Workspace:
     """Read from a zip base, write to a folder overlay, pack only on export.
@@ -48,6 +53,7 @@ class Workspace:
         self._zf: Optional[zipfile.ZipFile] = None
         self._base_names: Optional[frozenset] = None
         self._removed: set = set()        # tombstones — base members deleted this session
+        self._load_tombstones()           # restore any removals from a prior session
 
     # -- base (zip) access, cached so we open the archive at most once ---------
     def _zip(self) -> Optional[zipfile.ZipFile]:
@@ -67,6 +73,29 @@ class Workspace:
         if self._zf is not None:
             self._zf.close()
             self._zf = None
+
+    # -- durable tombstones (so a base-member removal survives a re-boot) -------
+    def _load_tombstones(self) -> None:
+        """Restore tombstones written by a prior session. Without this, the in-memory
+        ``_removed`` set is empty on every boot, so a base (zip) member removed last
+        session — via maintenance forget/rename/remove_source — would reappear straight
+        out of the read-only base (a 'resurrected' file the graph no longer references,
+        and a search zombie). Persisting them makes a removal durable on the overlay,
+        not only once it is baked into an exported zip."""
+        p = self.work / _TOMBSTONE
+        if p.is_file():
+            self._removed = {ln for ln in p.read_text("utf-8").splitlines() if ln}
+
+    def _persist_tombstones(self) -> None:
+        """Write the durable tombstone file. Only base members need it (overlay files
+        are unlinked for real); a folder-only workspace has no base, so this is a no-op
+        that leaves no marker."""
+        durable = sorted(r for r in self._removed if r in self._base_listing())
+        p = self.work / _TOMBSTONE
+        if durable:
+            p.write_text("\n".join(durable), "utf-8")
+        elif p.is_file():
+            p.unlink()
 
     # -- reads (overlay shadows base) ------------------------------------------
     def exists(self, rel: str) -> bool:
@@ -91,6 +120,9 @@ class Workspace:
         p = self.work / rel
         p.parent.mkdir(parents=True, exist_ok=True)
         p.write_bytes(data)            # one file — no archive rewrite
+        if rel in self._removed:       # writing a path un-removes it (e.g. rename dest, re-ingest)
+            self._removed.discard(rel)
+            self._persist_tombstones()
         return p
 
     def write_text(self, rel: str, text: str, encoding: str = "utf-8") -> Path:
@@ -101,16 +133,18 @@ class Workspace:
         anything was removed.
 
         Deletes the overlay copy if present, and **tombstones** the path so a member
-        that exists only in the read-only zip base is shadowed everywhere this session
-        (read / exists / listing skip it; export omits it) — so a removed file does
-        NOT reappear in the next exported zip. Tombstones are in-memory: a re-boot
-        from the same base forgets them, until the removal is baked in by an export."""
+        that exists only in the read-only zip base is shadowed everywhere (read /
+        exists / listing skip it; export omits it) — so a removed file does NOT
+        reappear in the next exported zip. The tombstone is **persisted to the overlay**
+        (see :meth:`_persist_tombstones`), so the removal also survives a re-boot from
+        the same base+overlay — not only once it is baked into an exported zip."""
         p = self.work / rel
         removed_overlay = p.is_file()
         if removed_overlay:
             p.unlink()
         in_base = rel in self._base_listing()
         self._removed.add(rel)
+        self._persist_tombstones()     # durable, so the removal survives a re-boot
         return removed_overlay or in_base
 
     # -- listing (union of overlay + base) -------------------------------------
@@ -122,7 +156,7 @@ class Workspace:
             for dirpath, _dirs, files in os.walk(root):
                 for fn in files:
                     rel = os.path.relpath(os.path.join(dirpath, fn), root).replace(os.sep, "/")
-                    if rel.startswith(prefix):
+                    if rel.startswith(prefix) and rel != _TOMBSTONE:
                         names.add(rel)
         return sorted(n for n in names if n not in self._removed)
 
