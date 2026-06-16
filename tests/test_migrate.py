@@ -6,6 +6,8 @@ knowledge (raw files, graph, curated notes) survives the structural change.
 """
 import zipfile
 
+import pytest
+
 from librarian import KnowledgeUnit, Librarian, Store
 from librarian.digest import graphbuilder as sf
 from librarian.store import pack_zip
@@ -62,3 +64,44 @@ def test_migrate_carries_kb_onto_lean_runtime(tmp_path):
     assert navigate.read_source(session.ws, "salesforce", tnode) is not None
     # the regenerated L0 map reflects the carried graph
     assert "salesforce" in session.l0
+
+
+def _rewrap(src_zip, dst_zip, prefix):
+    """Re-pack every member of ``src_zip`` under ``prefix`` (e.g. a Finder/Explorer
+    'compress folder' that nests everything under one directory)."""
+    with zipfile.ZipFile(src_zip) as zin, zipfile.ZipFile(dst_zip, "w") as zout:
+        for n in zin.namelist():
+            if not n.endswith("/"):
+                zout.writestr(prefix + n, zin.read(n))
+    return dst_zip
+
+
+def test_migrate_carries_kb_from_a_wrapper_folder_zip(tmp_path):
+    # a zip whose KB sits under a single wrapper dir (memory/kb/raw/…) must still
+    # carry — the literal kb/raw/ prefix match would otherwise find NOTHING and the
+    # migrate would silently emit an empty agent.
+    wrapped = _rewrap(_old_kb_zip(tmp_path), tmp_path / "wrapped.zip", "memory/")
+    out_dir, memzip, _prompt, counts = migrate_to_lean(
+        str(wrapped), "project", out_dir=tmp_path / "out")
+    assert counts["raw"] > 0 and counts["graphs"] >= 1 and counts["curated"] >= 1
+
+    with zipfile.ZipFile(memzip) as z:
+        lean = z.namelist()
+    assert "graph/salesforce.json" in lean                       # wrapper stripped, KB at root
+    assert any(n.startswith("kb/raw/salesforce/") for n in lean)
+    assert not any(n.startswith("memory/") for n in lean)        # no wrapper leaked through
+
+
+def test_migrate_refuses_empty_output_on_unrecognised_layout(tmp_path):
+    # a zip holding content under an unrecognised prefix must NOT yield a deploy-ready
+    # empty memory.zip — it must abort loudly (so a real KB is never silently dropped).
+    bad = tmp_path / "bad.zip"
+    with zipfile.ZipFile(bad, "w") as z:
+        z.writestr("knowledge/sources/big.bin", b"x" * 5000)
+        z.writestr("knowledge/meta.json", "{}")
+    out = tmp_path / "out"
+
+    with pytest.raises(SystemExit) as e:
+        migrate_to_lean(str(bad), "project", out_dir=out)
+    assert "carried NOTHING" in str(e.value) and "knowledge" in str(e.value)
+    assert not (out / "memory.zip").exists()                     # nothing written

@@ -377,38 +377,83 @@ def upgrade_profile(profile, old_zip, out_dir=None, wheelhouse=None, slim=True):
     return out_dir, memzip, prompt_path, changed
 
 
+_KB_ANCHORS = ("kb/raw/", "kb/curated/", "kb/work/", "kb/structured/", "graph/")
+
+# top-level members of a built zip that are CODE / scaffold, not knowledge — so a
+# source made only of these legitimately carries no KB (e.g. a fresh build being
+# upgraded for its wheelhouse). Anything OUTSIDE this set that also isn't carried KB
+# is "unrecognised content" → a layout mismatch the migrate guard must flag.
+_KNOWN_NON_KB = ("runtime/", "graphbuilder/", "librarian/", "pptx/", "index/",
+                 "reference/", "dev/", "schema/", "skills/", "agent_manifest.json",
+                 "manifest.json", "MASTER_PROMPT")
+
+
+def _carry_members(old_zip) -> list:
+    """Real file members of a zip, normalised: skip directory entries and archiver
+    cruft (``__MACOSX/``, ``.DS_Store``) and translate Windows separators."""
+    with zipfile.ZipFile(old_zip) as z:
+        return [n.replace("\\", "/") for n in z.namelist()
+                if not n.endswith("/") and not n.startswith("__MACOSX/")
+                and not n.rsplit("/", 1)[-1] == ".DS_Store"]
+
+
+def _kb_prefix(members) -> str:
+    """The wrapper-folder prefix to strip so the KB sits at the zip root.
+
+    A zip exported by the agent has ``kb/raw/…`` etc. at the root. But a zip that was
+    re-packed by hand (e.g. a Finder/Explorer "compress folder", or a download that
+    nested everything under one directory) carries ``<wrapper>/kb/raw/…`` — and a bare
+    ``startswith("kb/raw/")`` then matches NOTHING, silently carrying an empty KB. If
+    no member is at a known KB anchor but they all share a single top-level directory
+    that DOES contain the KB, return that ``"<wrapper>/"`` to strip; else ``""``."""
+    if any(m.startswith(_KB_ANCHORS) for m in members):
+        return ""                                          # already at the root
+    tops = {m.split("/", 1)[0] for m in members if "/" in m}
+    if len(tops) == 1:
+        p = tops.pop() + "/"
+        if any(m[len(p):].startswith(_KB_ANCHORS) for m in members if m.startswith(p)):
+            return p
+    return ""
+
+
 def _carry_kb(old_zip, ws) -> dict:
     """Copy a Librarian-model zip's KNOWLEDGE into a lean Workspace overlay.
 
     The actual knowledge is layout-compatible: raw source files already live at
     ``kb/raw/<source>/…`` (identical in both models) and each per-source structure
     graph is the same JSON, only relocated from ``kb/structured/<source>/graph.json``
-    to the lean ``graph/<source>.json`` shard. Curated notes carry verbatim. The
-    old manifest / changelog / dev-state / search index are NOT carried — the lean
-    runtime regenerates the indexes from the shards. No re-parsing: the old zip
-    already holds the parsed graphs."""
+    to the lean ``graph/<source>.json`` shard. Curated notes + the agent's work layer
+    carry verbatim. The old manifest / changelog / dev-state / search index are NOT
+    carried — the lean runtime regenerates the indexes from the shards. No re-parsing:
+    the old zip already holds the parsed graphs.
+
+    Tolerant of a single wrapper directory (see :func:`_kb_prefix`) and of Windows
+    path separators, so a hand-repacked zip still carries."""
     counts = {"raw": 0, "curated": 0, "work": 0, "graphs": 0, "skipped": 0}
+    members = _carry_members(old_zip)
+    prefix = _kb_prefix(members)
     with zipfile.ZipFile(old_zip) as z:
-        for n in z.namelist():
-            if n.endswith("/"):
-                continue
-            if n.startswith("kb/raw/"):
-                ws.write_bytes(n, z.read(n)); counts["raw"] += 1
-            elif n.startswith("kb/curated/"):
-                ws.write_bytes(n, z.read(n)); counts["curated"] += 1
-            elif n.startswith("kb/work/"):       # the agent's work layer survives upgrades
-                ws.write_bytes(n, z.read(n)); counts["work"] += 1
-            elif n.startswith("kb/structured/") and n.endswith("/graph.json"):
-                parts = n.split("/")                  # kb structured <source> graph.json
+        raw = {m.replace("\\", "/"): m for m in z.namelist()}   # normalised -> original name
+        for n in members:
+            rel = n[len(prefix):] if prefix else n
+            data = lambda: z.read(raw[n])                        # noqa: E731 (read by original name)
+            if rel.startswith("kb/raw/"):
+                ws.write_bytes(rel, data()); counts["raw"] += 1
+            elif rel.startswith("kb/curated/"):
+                ws.write_bytes(rel, data()); counts["curated"] += 1
+            elif rel.startswith("kb/work/"):     # the agent's work layer survives upgrades
+                ws.write_bytes(rel, data()); counts["work"] += 1
+            elif rel.startswith("kb/structured/") and rel.endswith("/graph.json"):
+                parts = rel.split("/")               # kb structured <source> graph.json
                 if len(parts) == 4 and parts[2] in _layout.SOURCES:
-                    ws.write_bytes(_layout.graph_shard(parts[2]), z.read(n))
+                    ws.write_bytes(_layout.graph_shard(parts[2]), data())
                     counts["graphs"] += 1
                 else:
                     counts["skipped"] += 1
-            elif n.startswith("graph/") and n.endswith(".json"):
-                src = n[len("graph/"):-len(".json")]   # lean source zip: already a shard
+            elif rel.startswith("graph/") and rel.endswith(".json"):
+                src = rel[len("graph/"):-len(".json")]   # lean source zip: already a shard
                 if "/" not in src and (src in _layout.SOURCES or src == "work"):
-                    ws.write_bytes(n, z.read(n)); counts["graphs"] += 1
+                    ws.write_bytes(rel, data()); counts["graphs"] += 1
                 else:
                     counts["skipped"] += 1
     return counts
@@ -450,6 +495,30 @@ def migrate_to_lean(old_zip, profile, out_dir=None, wheelhouse=None, slim=True):
         # the lean code zip is the read-only base; the carried KB is the overlay
         ws = Workspace(str(code), str(Path(tmp) / "work"))
         counts = _carry_kb(old_zip, ws)
+        # SAFETY: never emit a deploy-ready-looking but EMPTY zip when the source zip
+        # actually held knowledge we failed to recognise — deploying it would replace the
+        # agent's KB with nothing. Distinguish a genuinely KB-less source (a fresh code
+        # zip being upgraded for its wheelhouse — fine) from a layout mismatch: fire only
+        # when carry found no KB AND there is content that is neither carried nor known
+        # code/scaffold. Abort before writing anything; the input is untouched.
+        if counts["raw"] + counts["work"] + counts["curated"] + counts["graphs"] == 0:
+            members = _carry_members(old_zip)
+            pfx = _kb_prefix(members)
+            unrecognised = sorted({
+                (m[len(pfx):] if pfx else m).split("/", 1)[0]
+                for m in members
+                if not (m[len(pfx):] if pfx else m).startswith(_KNOWN_NON_KB)})
+            if unrecognised:
+                raise SystemExit(
+                    f"--migrate carried NOTHING from {old_zip} "
+                    f"(0 raw / 0 work / 0 curated / 0 graph, {counts['skipped']} skipped) — "
+                    f"yet the zip holds content that is not under the expected kb/raw/, "
+                    f"kb/work/, kb/structured/<src>/graph.json, or graph/<src>.json paths.\n"
+                    f"Unrecognised top-level entries: {unrecognised[:15]}\n"
+                    f"Refusing to write a near-empty memory.zip (deploying it would wipe the "
+                    f"agent's KB). The source zip was NOT modified.\n"
+                    f"Share this top-level list so the carry can be mapped to your zip's "
+                    f"actual layout.")
         index_gen.regenerate(ws)                      # rebuild L0/L1 from the shards
         if out_zip.exists():                          # never clobber: back up first
             shutil.move(str(out_zip), str(out_dir / "memory.prev.zip"))
