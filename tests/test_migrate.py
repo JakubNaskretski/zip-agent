@@ -105,3 +105,28 @@ def test_migrate_refuses_empty_output_on_unrecognised_layout(tmp_path):
         migrate_to_lean(str(bad), "project", out_dir=out)
     assert "carried NOTHING" in str(e.value) and "knowledge" in str(e.value)
     assert not (out / "memory.zip").exists()                     # nothing written
+
+
+def test_migrate_wrapper_zip_carries_curated_and_wheelhouse(tmp_path):
+    # a real-world shape: curated knowledge (image-transcriptions + summaries) + a
+    # graph + a bundled wheelhouse, ALL nested under one wrapper dir. Every piece must
+    # carry — curated knowledge AND the offline wheels — not just kb/raw.
+    src = tmp_path / "src.zip"
+    with zipfile.ZipFile(src, "w") as z:
+        z.writestr("memory/kb/curated/image-transcriptions/img001.md", "transcribed text\n")
+        z.writestr("memory/kb/curated/summaries/doc.md", "a summary\n")
+        z.writestr("memory/graph/docs.json",
+                   '{"version":1,"nodes":[],"edges":[],"unresolved":[],"errors":[]}')
+        z.writestr("memory/reference/wheelhouse/foo-1.0-py3-none-any.whl", b"wheelbytes")
+        z.writestr("memory/runtime/boot.py", "x")        # code — not carried
+        z.writestr("memory/agent_manifest.json", "{}")
+
+    _out, memzip, _p, counts = migrate_to_lean(str(src), "project", out_dir=tmp_path / "out")
+    assert counts["curated"] == 2 and counts["graphs"] >= 1    # curated KNOWLEDGE carried
+
+    with zipfile.ZipFile(memzip) as z:
+        names = z.namelist()
+    assert "kb/curated/image-transcriptions/img001.md" in names   # wrapper stripped
+    assert "kb/curated/summaries/doc.md" in names
+    assert any(n.endswith("foo-1.0-py3-none-any.whl") for n in names)  # wheelhouse carried
+    assert not any(n.startswith("memory/") for n in names)            # no wrapper leaked

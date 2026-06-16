@@ -345,10 +345,14 @@ def build_profile(profile, out_dir=None, wheelhouse=None, slim=True):
 def _extract_wheelhouse(zip_path, dest_dir):
     """Extract a built zip's bundled wheelhouse (``reference/wheelhouse/*.whl``)
     into ``dest_dir`` and return it, or ``None`` if the zip bundled no wheels —
-    so an upgrade can carry the old zip's offline capability forward verbatim."""
+    so an upgrade can carry the old zip's offline capability forward verbatim.
+
+    Matches the wheel path as a SUBSTRING (depth-independent) so a zip nested under a
+    wrapper directory (``<wrapper>/reference/wheelhouse/…``) still carries — only the
+    wheel filename is kept, so the wrapper never matters."""
     with zipfile.ZipFile(zip_path) as z:
         wheels = [n for n in z.namelist()
-                  if n.startswith("reference/wheelhouse/") and n.endswith(".whl")]
+                  if "reference/wheelhouse/" in n.replace("\\", "/") and n.endswith(".whl")]
         if not wheels:
             return None
         dest = Path(dest_dir)
@@ -640,8 +644,9 @@ if __name__ == "__main__":
             out_dir, memzip, prompt_path, counts = migrate_to_lean(
                 args.migrate, args.profile, args.out_dir, wheelhouse, slim=not args.no_slim)
             print(f"migrated profile '{args.profile}' onto the lightweight runtime:")
-            print(f"  carried: {counts['raw']} raw files, {counts['work']} work files, "
-                  f"{counts['graphs']} graph shard(s) (no re-parse)")
+            print(f"  carried: {counts['raw']} raw, {counts['curated']} curated, "
+                  f"{counts['work']} work files + {counts['graphs']} graph shard(s) "
+                  f"(no re-parse); {counts['skipped']} skipped")
             print(f"  memory.zip     {memzip}   (your KB on the lean runtime)")
             print(f"  MASTER_PROMPT  {prompt_path}")
             print("deploy: upload memory.zip, then paste MASTER_PROMPT.md into the "
